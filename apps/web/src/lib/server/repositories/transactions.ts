@@ -1,4 +1,4 @@
-import { getDb } from "../db";
+import { db, pick, quoted } from "../db";
 import type { Tx, TxStatus } from "@/lib/data";
 
 export interface TransactionRecord extends Tx {
@@ -6,122 +6,62 @@ export interface TransactionRecord extends Tx {
   created_at?: string;
 }
 
+const TABLE = "ledger_transactions";
+const EDITABLE = ["name", "memo", "cat", "date", "amt", "status", "method", "note"] as const;
+
+const toRecord = (r: any): TransactionRecord => ({
+  id: r.id,
+  name: r.name,
+  memo: r.memo,
+  cat: r.cat,
+  date: r.date,
+  amt: Number(r.amt),
+  status: r.status as TxStatus,
+  method: r.method,
+  note: r.note || undefined,
+  created_at: r.created_at,
+});
+
 export const TransactionsRepo = {
-  getAll(filter?: { search?: string; cat?: string; status?: string; limit?: number; offset?: number }): TransactionRecord[] {
-    const db = getDb();
-    let query = "SELECT id, name, memo, cat, date, amt, status, method, note, created_at FROM transactions WHERE 1=1";
-    const params: any[] = [];
-
+  async getAll(filter?: { search?: string; cat?: string; status?: string; limit?: number; offset?: number }): Promise<TransactionRecord[]> {
+    const params: Record<string, string | number> = { order: "date.desc,id.desc" };
     if (filter?.search) {
-      query += " AND (name LIKE ? OR memo LIKE ? OR id LIKE ?)";
-      const s = `%${filter.search}%`;
-      params.push(s, s, s);
+      const s = quoted(`*${filter.search}*`);
+      params.or = `(name.ilike.${s},memo.ilike.${s},id.ilike.${s})`;
     }
-    if (filter?.cat && filter.cat !== "All categories") {
-      query += " AND cat = ?";
-      params.push(filter.cat);
-    }
-    if (filter?.status && filter.status !== "All") {
-      query += " AND status = ?";
-      params.push(filter.status);
-    }
+    if (filter?.cat && filter.cat !== "All categories") params.cat = `eq.${filter.cat}`;
+    if (filter?.status && filter.status !== "All") params.status = `eq.${filter.status}`;
 
-    query += " ORDER BY date DESC, id DESC";
-
-    if (filter?.limit) {
-      query += " LIMIT ?";
-      params.push(filter.limit);
-      if (filter?.offset) {
-        query += " OFFSET ?";
-        params.push(filter.offset);
-      }
-    }
-
-    const rows = db.prepare(query).all(...params) as any[];
-    return rows.map((r) => ({
-      id: r.id,
-      name: r.name,
-      memo: r.memo,
-      cat: r.cat,
-      date: r.date,
-      amt: Number(r.amt),
-      status: r.status as TxStatus,
-      method: r.method,
-      note: r.note || undefined,
-      created_at: r.created_at,
-    }));
+    if (!filter?.limit) return (await db.selectAll(TABLE, params)).map(toRecord);
+    return (await db.select(TABLE, { ...params, limit: filter.limit, offset: filter.offset ?? 0 })).map(toRecord);
   },
 
-  getById(id: string): TransactionRecord | null {
-    const db = getDb();
-    const r = db.prepare("SELECT * FROM transactions WHERE id = ?").get(id) as any;
-    if (!r) return null;
-    return {
-      id: r.id,
-      name: r.name,
-      memo: r.memo,
-      cat: r.cat,
-      date: r.date,
-      amt: Number(r.amt),
-      status: r.status as TxStatus,
-      method: r.method,
-      note: r.note || undefined,
-      created_at: r.created_at,
-    };
+  async getById(id: string): Promise<TransactionRecord | null> {
+    const r = await db.first(TABLE, { id: `eq.${id}` });
+    return r && toRecord(r);
   },
 
-  create(data: Omit<TransactionRecord, "id"> & { id?: string }): TransactionRecord {
-    const db = getDb();
-    const id = data.id || `TX-${Math.floor(10000 + Math.random() * 90000)}`;
-    const now = new Date().toISOString();
-
-    db.prepare(`
-      INSERT INTO transactions (id, name, memo, cat, date, amt, status, method, note, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      id,
-      data.name,
-      data.memo,
-      data.cat,
-      data.date,
-      data.amt,
-      data.status || "Cleared",
-      data.method || "Other",
-      data.note || null,
-      now
-    );
-
-    return this.getById(id)!;
+  async create(data: Omit<TransactionRecord, "id"> & { id?: string }): Promise<TransactionRecord> {
+    const row = await db.insert(TABLE, {
+      id: data.id || `TX-${crypto.randomUUID().slice(0, 13).replace("-", "").toUpperCase()}`,
+      name: data.name,
+      memo: data.memo,
+      cat: data.cat,
+      date: data.date,
+      amt: data.amt,
+      status: data.status || "Cleared",
+      method: data.method || "Other",
+      note: data.note || null,
+    });
+    return toRecord(row);
   },
 
-  update(id: string, patch: Partial<TransactionRecord>): TransactionRecord | null {
-    const db = getDb();
-    const current = this.getById(id);
-    if (!current) return null;
-
-    const updated = { ...current, ...patch };
-    db.prepare(`
-      UPDATE transactions
-      SET name = ?, memo = ?, cat = ?, date = ?, amt = ?, status = ?, method = ?, note = ?
-      WHERE id = ?
-    `).run(
-      updated.name,
-      updated.memo,
-      updated.cat,
-      updated.date,
-      updated.amt,
-      updated.status,
-      updated.method,
-      updated.note || null,
-      id
-    );
-
-    return this.getById(id);
+  async update(id: string, patch: Partial<TransactionRecord>): Promise<TransactionRecord | null> {
+    const r = await db.update(TABLE, { id: `eq.${id}` }, pick(patch, EDITABLE));
+    return r && toRecord(r);
   },
 
-  delete(id: string): boolean {
-    const db = getDb();
-    const res = db.prepare("DELETE FROM transactions WHERE id = ?").run(id);
-    return res.changes > 0;
+  async delete(id: string): Promise<boolean> {
+    return (await db.remove(TABLE, { id: `eq.${id}` })) > 0;
   },
 };

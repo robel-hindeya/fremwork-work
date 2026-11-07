@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 export const GET = authed(async () => {
   try {
-    const data = TasksRepo.getAll();
+    const data = await TasksRepo.getAll();
     return NextResponse.json({ success: true, count: data.length, data });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
@@ -20,7 +20,7 @@ export const POST = authed(async (req: NextRequest) => {
       return NextResponse.json({ success: false, error: "Missing required fields (name, prompt, freq)" }, { status: 400 });
     }
 
-    const created = TasksRepo.create({
+    const created = await TasksRepo.create({
       name: body.name,
       prompt: body.prompt,
       freq: body.freq,

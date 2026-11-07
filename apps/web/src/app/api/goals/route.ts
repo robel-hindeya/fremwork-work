@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 export const GET = authed(async () => {
   try {
-    const data = GoalsRepo.getAll();
+    const data = await GoalsRepo.getAll();
     return NextResponse.json({ success: true, count: data.length, data });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
@@ -20,7 +20,7 @@ export const POST = authed(async (req: NextRequest) => {
       return NextResponse.json({ success: false, error: "Missing required fields" }, { status: 400 });
     }
 
-    const created = GoalsRepo.create({
+    const created = await GoalsRepo.create({
       name: body.name,
       type: body.type,
       cur: Number(body.cur || 0),

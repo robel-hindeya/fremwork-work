@@ -29,7 +29,7 @@ export interface FinancialSummary {
   previousLabel: string;
   incomeByCat: { current: Record<string, number>; previous: Record<string, number> };
   expenseByCat: { current: Record<string, number>; previous: Record<string, number> };
-  summary: { revenue: number; expenses: number; net: number; runwayMonths: number | null };
+  summary: { revenue: number; expenses: number; net: number; avgMonthlyExpenses: number; runwayMonths: number | null };
 }
 
 /** Integrations planned for later. None of these are connected yet. */

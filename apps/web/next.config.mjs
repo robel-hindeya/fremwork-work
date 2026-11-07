@@ -10,7 +10,6 @@ const LANDING_URL = process.env.LANDING_URL || 'https://www.fremwork.com';
 
 const nextConfig = {
   reactStrictMode: true,
-  serverExternalPackages: ['node:sqlite'],
   async redirects() {
     return [
       { source: '/sign-in', destination: `${LANDING_URL}/login`, permanent: false },

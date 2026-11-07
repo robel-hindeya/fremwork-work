@@ -1,3 +1,5 @@
+import { db } from "../db";
+import { calculate } from "./calculate";
 import { FINANCIAL_AGENT_TOOLS } from "./tools";
 
 export interface AgentResponse {
@@ -10,9 +12,14 @@ export interface AgentResponse {
 export type ChatTurn = { role: "user" | "ai"; text: string };
 
 /** A failure with a message that is safe and useful to show in the chat. */
-export class AgentError extends Error {}
+export class AgentError extends Error {
+  constructor(message: string, readonly status = 502) {
+    super(message);
+  }
+}
 
 const MAX_TURNS = 8;
+const DEFAULT_DAILY_LIMIT = 50;
 const FALLBACK_MODEL = "gemini-3.5-flash-lite";
 const API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -126,9 +133,7 @@ const TOOL_IMPL: Record<string, string> = {
 async function executeTool(name: string, args: any): Promise<any> {
   try {
     if (name === "calculate") {
-      const sanitized = String(args?.expression || "0").replace(/[^0-9+\-*/(). ]/g, "");
-      const result = Function(`'use strict'; return (${sanitized})`)();
-      return { expression: args?.expression, result, label: args?.label || "Calculation" };
+      return { expression: args?.expression, result: calculate(String(args?.expression ?? "")), label: args?.label || "Calculation" };
     }
     const impl = FINANCIAL_AGENT_TOOLS[TOOL_IMPL[name]];
     if (!impl) return { error: `Unknown tool ${name}` };
@@ -154,6 +159,11 @@ export async function runFinancialAgent(history: ChatTurn[], mode: string = "Bal
   if (!apiKey || apiKey.includes("your_")) {
     throw new AgentError("The AI isn't connected yet. Add GEMINI_API_KEY to apps/web/.env.local and try again.");
   }
+  const dailyLimit = Number(process.env.AI_DAILY_LIMIT) || DEFAULT_DAILY_LIMIT;
+  if ((await db.rpc<number>("bump_ai_usage")) > dailyLimit) {
+    throw new AgentError(`You've reached today's limit of ${dailyLimit} AI requests. It resets at midnight UTC.`, 429);
+  }
+
   const model = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
   const today = new Date().toISOString().split("T")[0];

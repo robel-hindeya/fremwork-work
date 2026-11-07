@@ -1,123 +1,74 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { DatabaseSync } from "node:sqlite";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { SUPABASE_KEY, SUPABASE_URL } from "./auth";
 
-// Vercel's app folder is read-only, so only the temp folder is writable there.
-// Temp storage is wiped when the server instance restarts.
-const DATA_DIR = process.env.VERCEL ? path.join(os.tmpdir(), "fremwork") : path.join(process.cwd(), "data");
+/** The signed-in user for the current request. Their token makes row level security apply. */
+export const userScope = new AsyncLocalStorage<{ userId: string; token: string }>();
 
-/** The signed-in user for the current request. Each user has their own database file. */
-export const userScope = new AsyncLocalStorage<string>();
+type Params = Record<string, string | number>;
 
-const databases = new Map<string, DatabaseSync>();
+/** PostgREST never returns more than this many rows at once. */
+const PAGE = 1000;
 
-export function getDb(): DatabaseSync {
-  const userId = userScope.getStore();
-  if (!userId) throw new Error("No signed-in user for this request.");
+async function call(path: string, params: Params, init: RequestInit = {}): Promise<any> {
+  const scope = userScope.getStore();
+  if (!scope) throw new Error("No signed-in user for this request.");
 
-  const existing = databases.get(userId);
-  if (existing) return existing;
-
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-
-  const db = new DatabaseSync(path.join(DATA_DIR, `user-${userId.replace(/[^a-zA-Z0-9-]/g, "")}.sqlite`));
-  db.exec("PRAGMA journal_mode = WAL;");
-  db.exec("PRAGMA synchronous = NORMAL;");
-  initSchema(db);
-
-  databases.set(userId, db);
-  return db;
+  const query = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]));
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}?${query}`, {
+    ...init,
+    cache: "no-store",
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${scope.token}`, "Content-Type": "application/json", ...init.headers },
+  });
+  const body = await res.text();
+  const data = body ? JSON.parse(body) : null;
+  if (!res.ok) throw new Error(data?.message || `Database error (${res.status})`);
+  return data;
 }
 
-function initSchema(db: DatabaseSync) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS transactions (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      memo TEXT NOT NULL,
-      cat TEXT NOT NULL,
-      date TEXT NOT NULL,
-      amt REAL NOT NULL,
-      status TEXT NOT NULL,
-      method TEXT NOT NULL,
-      note TEXT,
-      created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
-    CREATE INDEX IF NOT EXISTS idx_transactions_cat ON transactions(cat);
-    CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);
+const RETURN_ROWS = { Prefer: "return=representation" };
 
-    CREATE TABLE IF NOT EXISTS budgets (
-      id TEXT PRIMARY KEY,
-      k TEXT UNIQUE NOT NULL,
-      oct REAL NOT NULL,
-      sep REAL NOT NULL,
-      budget REAL NOT NULL,
-      owner TEXT NOT NULL,
-      alert TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
+/** Quotes a value for use inside a PostgREST `or=(...)` filter. */
+export const quoted = (value: string) => `"${value.replace(/[\\"]/g, "\\$&")}"`;
 
-    CREATE TABLE IF NOT EXISTS goals (
-      id TEXT PRIMARY KEY,
-      type TEXT NOT NULL,
-      name TEXT NOT NULL,
-      cur REAL NOT NULL,
-      target REAL NOT NULL,
-      start REAL NOT NULL,
-      date TEXT NOT NULL,
-      down INTEGER NOT NULL DEFAULT 0,
-      status TEXT NOT NULL,
-      ai TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
+export const db = {
+  select: <T = any>(table: string, params: Params = {}): Promise<T[]> => call(table, { select: "*", ...params }),
 
-    CREATE TABLE IF NOT EXISTS projects (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      desc TEXT NOT NULL,
-      chats_json TEXT NOT NULL DEFAULT '[]',
-      docs_json TEXT NOT NULL DEFAULT '[]',
-      reports_json TEXT NOT NULL DEFAULT '[]',
-      updated TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
+  /** Every matching row, however many. `params` must set a stable `order`. */
+  async selectAll<T = any>(table: string, params: Params): Promise<T[]> {
+    const rows: T[] = [];
+    for (;;) {
+      const page = await db.select<T>(table, { ...params, limit: PAGE, offset: rows.length });
+      rows.push(...page);
+      if (page.length < PAGE) return rows;
+    }
+  },
 
-    CREATE TABLE IF NOT EXISTS tasks (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      prompt TEXT NOT NULL,
-      freq TEXT NOT NULL,
-      next_run TEXT NOT NULL,
-      last_run TEXT NOT NULL,
-      last_failed INTEGER NOT NULL DEFAULT 0,
-      is_on INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL
-    );
+  async first<T = any>(table: string, params: Params): Promise<T | null> {
+    return (await db.select<T>(table, { ...params, limit: 1 }))[0] ?? null;
+  },
 
-    CREATE TABLE IF NOT EXISTS conversations (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      project_id TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
+  async insert<T = any>(table: string, row: object): Promise<T> {
+    const rows = await call(table, {}, { method: "POST", headers: RETURN_ROWS, body: JSON.stringify(row) });
+    return rows[0];
+  },
 
-    CREATE TABLE IF NOT EXISTS messages (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      role TEXT NOT NULL,
-      kind TEXT,
-      mode TEXT,
-      status TEXT NOT NULL,
-      text TEXT,
-      file_name TEXT,
-      files_json TEXT NOT NULL DEFAULT '[]',
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-    );
-    CREATE INDEX IF NOT EXISTS idx_messages_convo ON messages(conversation_id);
-  `);
+  /** Returns the updated row, or null if nothing matched. */
+  async update<T = any>(table: string, filter: Params, patch: object): Promise<T | null> {
+    if (Object.values(patch).every((v) => v === undefined)) return db.first<T>(table, filter);
+    const rows = await call(table, filter, { method: "PATCH", headers: RETURN_ROWS, body: JSON.stringify(patch) });
+    return rows[0] ?? null;
+  },
+
+  /** Returns how many rows were deleted. */
+  async remove(table: string, filter: Params): Promise<number> {
+    const rows = await call(table, { ...filter, select: "id" }, { method: "DELETE", headers: RETURN_ROWS });
+    return rows.length;
+  },
+
+  rpc: <T = any>(name: string): Promise<T> => call(`rpc/${name}`, {}, { method: "POST", body: "{}" }),
+};
+
+/** Copies only the listed fields, so a request body can't write columns like user_id. */
+export function pick<K extends string>(source: Partial<Record<K, unknown>>, keys: readonly K[]) {
+  return Object.fromEntries(keys.map((k) => [k, source[k]]));
 }

@@ -1,12 +1,12 @@
-import { getDb } from "../db";
+import { db } from "../db";
 import type { FinancialSummary } from "@/lib/data";
 
 const monthKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 
 export const FinancialService = {
   /** Everything here is derived from the transactions table. Failed payments never count. */
-  getMetrics(): FinancialSummary {
-    const rows = getDb().prepare("SELECT amt, cat, date, status FROM transactions WHERE status != 'Failed'").all() as any[];
+  async getMetrics(): Promise<FinancialSummary> {
+    const rows = await db.selectAll("ledger_transactions", { select: "id,amt,cat,date,status", status: "neq.Failed", order: "id" });
 
     const now = new Date();
     const window = Array.from({ length: 12 }, (_, i) => new Date(now.getFullYear(), now.getMonth() - 11 + i, 1));
@@ -54,6 +54,7 @@ export const FinancialService = {
         revenue: rev[11],
         expenses: exp[11],
         net: rev[11] - exp[11],
+        avgMonthlyExpenses,
         runwayMonths: avgMonthlyExpenses > 0 && cash > 0 ? +(cash / avgMonthlyExpenses).toFixed(1) : null,
       },
     };

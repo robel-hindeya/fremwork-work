@@ -13,7 +13,7 @@ export const GET = authed(async (req: NextRequest) => {
     const limit = searchParams.get("limit") ? parseInt(searchParams.get("limit")!) : undefined;
     const offset = searchParams.get("offset") ? parseInt(searchParams.get("offset")!) : undefined;
 
-    const items = TransactionsRepo.getAll({ search, cat, status, limit, offset });
+    const items = await TransactionsRepo.getAll({ search, cat, status, limit, offset });
     return NextResponse.json({ success: true, count: items.length, data: items });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
@@ -27,7 +27,7 @@ export const POST = authed(async (req: NextRequest) => {
       return NextResponse.json({ success: false, error: "Missing required fields (name, amt, date)" }, { status: 400 });
     }
 
-    const created = TransactionsRepo.create({
+    const created = await TransactionsRepo.create({
       name: body.name,
       amt: Number(body.amt),
       cat: body.cat || "Other expense",

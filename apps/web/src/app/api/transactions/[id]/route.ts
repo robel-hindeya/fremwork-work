@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export const GET = authed(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   try {
     const { id } = await params;
-    const tx = TransactionsRepo.getById(id);
+    const tx = await TransactionsRepo.getById(id);
     if (!tx) return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
     return NextResponse.json({ success: true, data: tx });
   } catch (err: any) {
@@ -19,7 +19,7 @@ export const PUT = authed(async (req: NextRequest, { params }: { params: Promise
   try {
     const { id } = await params;
     const body = await req.json();
-    const updated = TransactionsRepo.update(id, body);
+    const updated = await TransactionsRepo.update(id, body);
     if (!updated) return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
     return NextResponse.json({ success: true, data: updated });
   } catch (err: any) {
@@ -30,7 +30,7 @@ export const PUT = authed(async (req: NextRequest, { params }: { params: Promise
 export const DELETE = authed(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   try {
     const { id } = await params;
-    const ok = TransactionsRepo.delete(id);
+    const ok = await TransactionsRepo.delete(id);
     if (!ok) return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
     return NextResponse.json({ success: true, message: "Transaction deleted" });
   } catch (err: any) {

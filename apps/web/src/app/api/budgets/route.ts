@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 
 export const GET = authed(async () => {
   try {
-    const data = BudgetsRepo.getAll();
+    const data = await BudgetsRepo.getAll();
     return NextResponse.json({ success: true, count: data.length, data });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
@@ -20,7 +20,7 @@ export const POST = authed(async (req: NextRequest) => {
       return NextResponse.json({ success: false, error: "Missing required fields (k, budget)" }, { status: 400 });
     }
 
-    const created = BudgetsRepo.create({
+    const created = await BudgetsRepo.create({
       k: body.k,
       budget: Number(body.budget),
       owner: body.owner || "Unassigned",

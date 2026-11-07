@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export const GET = authed(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   try {
     const { id } = await params;
-    const project = ProjectsRepo.getById(id);
+    const project = await ProjectsRepo.getById(id);
     if (!project) return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
     return NextResponse.json({ success: true, data: project });
   } catch (err: any) {
@@ -19,7 +19,7 @@ export const PUT = authed(async (req: NextRequest, { params }: { params: Promise
   try {
     const { id } = await params;
     const body = await req.json();
-    const updated = ProjectsRepo.update(id, body);
+    const updated = await ProjectsRepo.update(id, body);
     if (!updated) return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
     return NextResponse.json({ success: true, data: updated });
   } catch (err: any) {
@@ -30,7 +30,7 @@ export const PUT = authed(async (req: NextRequest, { params }: { params: Promise
 export const DELETE = authed(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   try {
     const { id } = await params;
-    const ok = ProjectsRepo.delete(id);
+    const ok = await ProjectsRepo.delete(id);
     if (!ok) return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
     return NextResponse.json({ success: true, message: "Project deleted" });
   } catch (err: any) {

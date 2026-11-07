@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 
 export const GET = authed(async () => {
   try {
-    const list = ChatRepo.getAllConversations();
+    const list = await ChatRepo.getAllConversations();
     return NextResponse.json({ success: true, count: list.length, data: list });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
@@ -25,10 +25,10 @@ export const POST = authed(async (req: NextRequest) => {
 
     const cid = conversationId || `c-${Date.now().toString(36)}`;
 
-    if (retry) ChatRepo.dropTrailingAiMessages(cid);
-    else ChatRepo.addMessage(cid, { role: "user", text: q, files: files || [], status: "done" });
+    if (retry) await ChatRepo.dropTrailingAiMessages(cid);
+    else await ChatRepo.addMessage(cid, { role: "user", text: q, files: files || [], status: "done" });
 
-    const stored = ChatRepo.getConversation(cid)?.messages ?? [];
+    const stored = (await ChatRepo.getConversation(cid))?.messages ?? [];
     const history = stored.filter((m) => m.text).map((m) => ({ role: m.role, text: m.text! }));
 
     const attached = stored.at(-1)?.files ?? [];
@@ -39,7 +39,7 @@ export const POST = authed(async (req: NextRequest) => {
 
     const agentRes = await runFinancialAgent(history, mode);
 
-    const aiMessage = ChatRepo.addMessage(cid, { role: "ai", mode, status: "done", text: agentRes.text, files: [] });
+    const aiMessage = await ChatRepo.addMessage(cid, { role: "ai", mode, status: "done", text: agentRes.text, files: [] });
 
     return NextResponse.json({
       success: true,
@@ -49,7 +49,7 @@ export const POST = authed(async (req: NextRequest) => {
       },
     });
   } catch (err: any) {
-    const status = err instanceof AgentError ? 502 : 500;
+    const status = err instanceof AgentError ? err.status : 500;
     return NextResponse.json({ success: false, error: err.message }, { status });
   }
 });

@@ -19,8 +19,8 @@ export const FINANCIAL_AGENT_TOOLS: Record<string, ToolDefinition> = {
       category: "Optional transaction category (e.g., Software, Payroll, Travel)",
       limit: "Max number of transactions to return (default 10)",
     },
-    execute: (args) => {
-      const items = TransactionsRepo.getAll({
+    execute: async (args) => {
+      const items = await TransactionsRepo.getAll({
         search: args.search,
         cat: args.category,
         limit: args.limit ? Number(args.limit) : 10,
@@ -50,9 +50,9 @@ export const FINANCIAL_AGENT_TOOLS: Record<string, ToolDefinition> = {
       date: "ISO date YYYY-MM-DD",
       memo: "Description or purpose",
     },
-    execute: (args) => {
+    execute: async (args) => {
       const amt = Number(args.amount);
-      const created = TransactionsRepo.create({
+      const created = await TransactionsRepo.create({
         name: args.name,
         amt,
         cat: args.category || "Other expense",
@@ -73,9 +73,9 @@ export const FINANCIAL_AGENT_TOOLS: Record<string, ToolDefinition> = {
     name: "getFinancialHealth",
     description: "Get real-time cash balance, burn rate, runway months, revenue, expenses, and net margin.",
     parameters: {},
-    execute: () => {
-      const metrics = FinancialService.getMetrics();
-      const budgets = BudgetsRepo.getAll();
+    execute: async () => {
+      const metrics = await FinancialService.getMetrics();
+      const budgets = await BudgetsRepo.getAll();
       const overBudgets = budgets.filter((b) => b.oct > b.budget);
       const { revenue, expenses, net, runwayMonths } = metrics.summary;
 
@@ -102,8 +102,8 @@ export const FINANCIAL_AGENT_TOOLS: Record<string, ToolDefinition> = {
     name: "getBudgetsStatus",
     description: "List all department budgets and their utilization percentage.",
     parameters: {},
-    execute: () => {
-      const list = BudgetsRepo.getAll();
+    execute: async () => {
+      const list = await BudgetsRepo.getAll();
       return list.map((b) => ({
         category: b.k,
         budget: b.budget,
@@ -123,8 +123,8 @@ export const FINANCIAL_AGENT_TOOLS: Record<string, ToolDefinition> = {
       budget: "Monthly budget amount in USD",
       owner: "Team or person responsible",
     },
-    execute: (args) => {
-      const created = BudgetsRepo.create({
+    execute: async (args) => {
+      const created = await BudgetsRepo.create({
         k: args.category,
         budget: Number(args.budget),
         owner: args.owner || "Finance Team",
@@ -147,8 +147,8 @@ export const FINANCIAL_AGENT_TOOLS: Record<string, ToolDefinition> = {
       current: "Current dollar amount",
       date: "Target completion date YYYY-MM-DD",
     },
-    execute: (args) => {
-      const created = GoalsRepo.create({
+    execute: async (args) => {
+      const created = await GoalsRepo.create({
         name: args.name,
         type: args.type || "Savings target",
         cur: Number(args.current || 0),
@@ -170,30 +170,25 @@ export const FINANCIAL_AGENT_TOOLS: Record<string, ToolDefinition> = {
       monthlyCostChange: "Monthly change in expenses (+ for new hire, - for savings)",
       monthlyRevenueChange: "Monthly change in revenue (+ for expansion, - for churn)",
     },
-    execute: (args) => {
-      const metrics = FinancialService.getMetrics();
+    execute: async (args) => {
+      const metrics = await FinancialService.getMetrics();
       const currentCash = metrics.cash;
-      const baseMonthlyBurn = metrics.summary.expenses;
-      const baseMonthlyRev = metrics.summary.revenue;
+      const { avgMonthlyExpenses: baseMonthlyBurn, runwayMonths: baseRunway } = metrics.summary;
 
       const dCost = Number(args.monthlyCostChange || 0);
       const dRev = Number(args.monthlyRevenueChange || 0);
 
-      const projectedBurn = baseMonthlyBurn + dCost;
-      const projectedRev = baseMonthlyRev + dRev;
-      const projectedNet = projectedRev - projectedBurn;
-
-      const baseRunway = +(currentCash / (baseMonthlyBurn || 1)).toFixed(1);
-      const newRunway = projectedNet < 0 ? +(currentCash / Math.abs(projectedNet)).toFixed(1) : "Cash flow positive";
+      // Same basis as the dashboard's runway: cash divided by average monthly expenses.
+      const projectedBurn = baseMonthlyBurn + dCost - dRev;
+      const newRunway = projectedBurn > 0 ? (currentCash > 0 ? +(currentCash / projectedBurn).toFixed(1) : 0) : "Cash flow positive";
 
       return {
         currentCash,
         baseMonthlyBurn,
         projectedMonthlyBurn: projectedBurn,
-        projectedNetMonthly: projectedNet,
         currentRunwayMonths: baseRunway,
         projectedRunwayMonths: newRunway,
-        differenceMonths: typeof newRunway === "number" ? +(newRunway - baseRunway).toFixed(1) : "N/A",
+        differenceMonths: typeof newRunway === "number" && baseRunway !== null ? +(newRunway - baseRunway).toFixed(1) : "N/A",
       };
     },
   },

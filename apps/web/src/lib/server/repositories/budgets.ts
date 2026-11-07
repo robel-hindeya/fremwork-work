@@ -1,4 +1,4 @@
-import { getDb } from "../db";
+import { db, pick } from "../db";
 import type { BudgetCat } from "@/lib/data";
 
 export interface BudgetRecord extends BudgetCat {
@@ -7,86 +7,67 @@ export interface BudgetRecord extends BudgetCat {
   created_at?: string;
 }
 
+const TABLE = "ledger_budgets";
+const EDITABLE = ["k", "budget", "owner", "alert"] as const;
+
 /** Spending per lower-cased category for one month (YYYY-MM), from the ledger. */
-function spentIn(month: string): Record<string, number> {
-  const rows = getDb()
-    .prepare("SELECT LOWER(cat) AS cat, SUM(-amt) AS spent FROM transactions WHERE amt < 0 AND status != 'Failed' AND substr(date, 1, 7) = ? GROUP BY LOWER(cat)")
-    .all(month) as any[];
-  return Object.fromEntries(rows.map((r) => [r.cat, Number(r.spent)]));
+async function spentIn(month: string): Promise<Record<string, number>> {
+  const rows = await db.selectAll("ledger_transactions", {
+    select: "id,cat,amt",
+    amt: "lt.0",
+    status: "neq.Failed",
+    date: `like.${month}*`,
+    order: "id",
+  });
+  const spent: Record<string, number> = {};
+  for (const r of rows) {
+    const cat = r.cat.toLowerCase();
+    spent[cat] = (spent[cat] ?? 0) - Number(r.amt);
+  }
+  return spent;
 }
 
 const monthKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 
+const toRecord = (r: any, thisMonth: Record<string, number> = {}, lastMonth: Record<string, number> = {}): BudgetRecord => ({
+  id: r.id,
+  k: r.k,
+  oct: thisMonth[r.k.toLowerCase()] ?? 0,
+  sep: lastMonth[r.k.toLowerCase()] ?? 0,
+  budget: Number(r.budget),
+  owner: r.owner,
+  alert: r.alert,
+  created_at: r.created_at,
+});
+
 export const BudgetsRepo = {
-  getAll(): BudgetRecord[] {
-    const db = getDb();
-    const rows = db.prepare("SELECT * FROM budgets ORDER BY budget DESC").all() as any[];
+  async getAll(): Promise<BudgetRecord[]> {
     const now = new Date();
-    const thisMonth = spentIn(monthKey(now));
-    const lastMonth = spentIn(monthKey(new Date(now.getFullYear(), now.getMonth() - 1, 1)));
-    return rows.map((r) => ({
-      id: r.id,
-      k: r.k,
-      oct: thisMonth[r.k.toLowerCase()] ?? 0,
-      sep: lastMonth[r.k.toLowerCase()] ?? 0,
-      budget: Number(r.budget),
-      owner: r.owner,
-      alert: r.alert,
-      created_at: r.created_at,
-    }));
+    const [rows, thisMonth, lastMonth] = await Promise.all([
+      db.selectAll(TABLE, { order: "budget.desc,id" }),
+      spentIn(monthKey(now)),
+      spentIn(monthKey(new Date(now.getFullYear(), now.getMonth() - 1, 1))),
+    ]);
+    return rows.map((r) => toRecord(r, thisMonth, lastMonth));
   },
 
-  create(data: { k: string; budget: number; owner: string; alert?: string }): BudgetRecord {
-    const db = getDb();
-    const id = `b-${Date.now().toString(36)}`;
-    const now = new Date().toISOString();
-
-    db.prepare(`
-      INSERT INTO budgets (id, k, oct, sep, budget, owner, alert, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, data.k, 0, 0, data.budget, data.owner, data.alert || "90% of budget", now);
-
-    const r = db.prepare("SELECT * FROM budgets WHERE id = ?").get(id) as any;
-    return {
-      id: r.id,
-      k: r.k,
-      oct: Number(r.oct),
-      sep: Number(r.sep),
-      budget: Number(r.budget),
-      owner: r.owner,
-      alert: r.alert,
-      created_at: r.created_at,
-    };
+  async create(data: { k: string; budget: number; owner: string; alert?: string }): Promise<BudgetRecord> {
+    const row = await db.insert(TABLE, {
+      id: `b-${Date.now().toString(36)}`,
+      k: data.k,
+      budget: data.budget,
+      owner: data.owner,
+      alert: data.alert || "90% of budget",
+    });
+    return toRecord(row);
   },
 
-  update(id: string, patch: Partial<BudgetRecord>): BudgetRecord | null {
-    const db = getDb();
-    const current = db.prepare("SELECT * FROM budgets WHERE id = ?").get(id) as any;
-    if (!current) return null;
-
-    const updated = { ...current, ...patch };
-    db.prepare(`
-      UPDATE budgets
-      SET k = ?, oct = ?, sep = ?, budget = ?, owner = ?, alert = ?
-      WHERE id = ?
-    `).run(updated.k, updated.oct, updated.sep, updated.budget, updated.owner, updated.alert, id);
-
-    const r = db.prepare("SELECT * FROM budgets WHERE id = ?").get(id) as any;
-    return {
-      id: r.id,
-      k: r.k,
-      oct: Number(r.oct),
-      sep: Number(r.sep),
-      budget: Number(r.budget),
-      owner: r.owner,
-      alert: r.alert,
-      created_at: r.created_at,
-    };
+  async update(id: string, patch: Partial<BudgetRecord>): Promise<BudgetRecord | null> {
+    const r = await db.update(TABLE, { id: `eq.${id}` }, pick(patch, EDITABLE));
+    return r && toRecord(r);
   },
 
-  delete(id: string): boolean {
-    const db = getDb();
-    const res = db.prepare("DELETE FROM budgets WHERE id = ?").run(id);
-    return res.changes > 0;
+  async delete(id: string): Promise<boolean> {
+    return (await db.remove(TABLE, { id: `eq.${id}` })) > 0;
   },
 };

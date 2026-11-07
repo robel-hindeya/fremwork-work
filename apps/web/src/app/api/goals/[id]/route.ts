@@ -8,7 +8,7 @@ export const PUT = authed(async (req: NextRequest, { params }: { params: Promise
   try {
     const { id } = await params;
     const body = await req.json();
-    const updated = GoalsRepo.update(id, body);
+    const updated = await GoalsRepo.update(id, body);
     if (!updated) return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
     return NextResponse.json({ success: true, data: updated });
   } catch (err: any) {
@@ -19,7 +19,7 @@ export const PUT = authed(async (req: NextRequest, { params }: { params: Promise
 export const DELETE = authed(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   try {
     const { id } = await params;
-    const ok = GoalsRepo.delete(id);
+    const ok = await GoalsRepo.delete(id);
     if (!ok) return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
     return NextResponse.json({ success: true, message: "Goal deleted" });
   } catch (err: any) {
