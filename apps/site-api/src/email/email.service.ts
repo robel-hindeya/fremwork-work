@@ -42,7 +42,6 @@ export class EmailService {
       path.join(process.cwd(), 'src/templates/registration-email.html'),
       path.join(process.cwd(), 'apps/site-api/src/templates/registration-email.html'),
       path.join(process.cwd(), 'supabase/templates/registration-email.html'),
-      '/home/hammerspacecraft/Downloads/Telegram Desktop/fremwork-registration-email.html',
     ];
 
     for (const p of possiblePaths) {
@@ -76,8 +75,8 @@ export class EmailService {
     const dates = opts.dates || 'Upcoming';
 
     const html = template
-      .replace(/{{\s*participant_name\s*}}/g, participantName)
-      .replace(/{{\s*dates\s*}}/g, dates);
+      .replace(/{{\s*participant_name\s*}}/g, () => escapeHtml(participantName))
+      .replace(/{{\s*dates\s*}}/g, () => escapeHtml(dates));
 
     const text = `Welcome ${participantName},\n\nYou are registered for ${opts.title || 'the Fremwork 3-Day Vibe Coding Training'}.\nDates: ${dates}\nDaily time: 09:00–13:40 EAT\n\nGet ready before Day 1:\n- A laptop or desktop and a stable internet connection\n- An AI tool account of your choice and a GitHub account\n- One small project idea you care about\n\nSee you online,\nFremwork Team\nhttps://fremwork.com`;
 
@@ -134,4 +133,11 @@ export class EmailService {
       return false;
     }
   }
+}
+
+const HTML_ENTITIES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+/** Names come from public forms, so they must never be treated as HTML in the email. */
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (c) => HTML_ENTITIES[c]);
 }

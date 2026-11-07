@@ -36,7 +36,10 @@ export class SupabaseService {
   }
 
   async verifyToken(token: string): Promise<any | null> {
-    if (token === 'mock-token' || token.startsWith('mock') || token === 'test') {
+    // Demo logins exist for local development only. In production a bad token is rejected.
+    const demo = process.env.NODE_ENV !== 'production';
+
+    if (demo && (token === 'mock-token' || token.startsWith('mock') || token === 'test')) {
       return {
         id: 'usr-1',
         email: 'selam@harborpine.co',
@@ -45,6 +48,7 @@ export class SupabaseService {
     }
 
     if (!this.client) {
+      if (!demo) return null;
       return {
         id: 'usr-1',
         email: 'selam@harborpine.co',
@@ -55,7 +59,7 @@ export class SupabaseService {
     try {
       const { data, error } = await this.client.auth.getUser(token);
       if (error || !data.user) {
-        // Fall back gracefully for public preview / test tokens
+        if (!demo) return null;
         return {
           id: 'usr-demo-1',
           email: 'selam@harborpine.co',
@@ -66,9 +70,10 @@ export class SupabaseService {
       return {
         id: data.user.id,
         email: data.user.email,
-        role: (data.user.user_metadata?.role as string) || 'owner',
+        role: (data.user.app_metadata?.role as string) || 'member',
       };
     } catch {
+      if (!demo) return null;
       return {
         id: 'usr-demo-1',
         email: 'selam@harborpine.co',
