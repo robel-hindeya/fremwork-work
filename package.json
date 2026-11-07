@@ -7,7 +7,7 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "concurrently -n web,api,site -c green,blue,magenta \"npm run dev:web\" \"npm run dev:api\" \"npm run dev:site\"",
+    "dev": "concurrently -n web,api,site,site-api -c green,blue,magenta,cyan \"npm run dev:web\" \"npm run dev:api\" \"npm run dev:site\" \"npm run dev:site-api\"",
     "dev:web": "npm run dev --workspace=@fremwork/web",
     "dev:api": "npm run dev --workspace=@fremwork/api",
     "start": "npm run start:web",

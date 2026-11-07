@@ -389,6 +389,7 @@ export function EventsScreen({ initialEvents, settings }: { initialEvents: Publi
       </div>
       </>) : null}
       <footer style={{ borderTop: "1px solid #EDEDED", background: "#FFFFFF", padding: "40px 16px 0", overflow: "hidden" }}>
+      <div style={{ maxWidth: "1280px", margin: "0 auto 24px", display: "flex", justifyContent: "center", gap: "20px", fontSize: "13px" }}><Link href="/privacy" className="lnk" style={{ color: "#5E5E5E" }}>Privacy</Link><Link href="/terms" className="lnk" style={{ color: "#5E5E5E" }}>Terms</Link></div>
       <div style={{ maxWidth: "1280px", margin: "0 auto", height: "0.8em", overflow: "hidden", fontSize: "clamp(72px, 19.5vw, 280px)", lineHeight: "0.98", fontWeight: "600", letterSpacing: "-0.06em", textAlign: "center", whiteSpace: "nowrap", userSelect: "none", background: "linear-gradient(180deg, #B4B4B4 0%, #D9D9D9 45%, #FFFFFF 95%)", WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent" }}>Fremwork</div>
       </footer>
       <div className="tb-space" aria-hidden="true"></div>
