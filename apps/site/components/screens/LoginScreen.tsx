@@ -15,7 +15,7 @@ import { getPostLoginRedirect } from '@/lib/auth-dest';
 const siteUrl = () => process.env.NEXT_PUBLIC_SITE_URL || window.location.origin;
 const nextParam = () => {
   const n = new URLSearchParams(window.location.search).get('next');
-  return n && n.startsWith('/') && !n.startsWith('//') ? n : null;
+  return n && ['/open-app', '/admin', '/set-password'].includes(n) ? n : null;
 };
 
 /** Log in · standard login for all users, automatically routing admins to /admin and users to the app. */

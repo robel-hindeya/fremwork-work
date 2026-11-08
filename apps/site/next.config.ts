@@ -6,6 +6,12 @@ try { process.loadEnvFile(path.resolve(process.cwd(), '../../.env')); } catch {}
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  async headers() {
+    return ['/auth/:path*', '/open-app'].map((source) => ({ source, headers: [
+      { key: 'Referrer-Policy', value: 'no-referrer' },
+      { key: 'Cache-Control', value: 'no-store' },
+    ] }));
+  },
   outputFileTracingRoot: path.resolve(process.cwd(), '../..'),
   // Type errors still fail the build. No ESLint config is set up yet.
   eslint: { ignoreDuringBuilds: true },

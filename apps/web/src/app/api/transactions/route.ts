@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { transactionError } from "@/lib/server/validation";
 import { authed } from "@/lib/server/with-user";
 import { TransactionsRepo } from "@/lib/server/repositories/transactions";
 
@@ -23,6 +24,8 @@ export const GET = authed(async (req: NextRequest) => {
 export const POST = authed(async (req: NextRequest) => {
   try {
     const body = await req.json();
+    const invalid = transactionError(body, false);
+    if (invalid) return NextResponse.json({ success: false, error: invalid }, { status: 400 });
     if (!body.name || !body.amt || !body.date) {
       return NextResponse.json({ success: false, error: "Missing required fields (name, amt, date)" }, { status: 400 });
     }

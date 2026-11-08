@@ -13,15 +13,16 @@ async function call(path: string, params: Params, init: RequestInit = {}): Promi
   const scope = userScope.getStore();
   if (!scope) throw new Error("No signed-in user for this request.");
 
-  const query = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]));
+  const query = new URLSearchParams(Object.entries(path.startsWith("rpc/") ? params : { ...params, user_id: `eq.${scope.userId}` }).map(([k, v]) => [k, String(v)]));
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}?${query}`, {
     ...init,
     cache: "no-store",
+    signal: AbortSignal.timeout(15000),
     headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${scope.token}`, "Content-Type": "application/json", ...init.headers },
   });
   const body = await res.text();
   const data = body ? JSON.parse(body) : null;
-  if (!res.ok) throw new Error(data?.message || `Database error (${res.status})`);
+  if (!res.ok) throw new Error("Your financial data is temporarily unavailable. Please try again.");
   return data;
 }
 

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { transactionError } from "@/lib/server/validation";
 import { authed } from "@/lib/server/with-user";
 import { TransactionsRepo } from "@/lib/server/repositories/transactions";
 
@@ -19,6 +20,8 @@ export const PUT = authed(async (req: NextRequest, { params }: { params: Promise
   try {
     const { id } = await params;
     const body = await req.json();
+    const invalid = transactionError(body, true);
+    if (invalid) return NextResponse.json({ success: false, error: invalid }, { status: 400 });
     const updated = await TransactionsRepo.update(id, body);
     if (!updated) return NextResponse.json({ success: false, error: "Not found" }, { status: 404 });
     return NextResponse.json({ success: true, data: updated });

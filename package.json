@@ -21,7 +21,8 @@
     "dev:site": "npm run dev --workspace=@fremwork/site",
     "dev:site-api": "npm run dev --workspace=@fremwork/site-api",
     "build:site": "npm run build --workspace=@fremwork/site",
-    "build:site-api": "npm run build --workspace=@fremwork/site-api"
+    "build:site-api": "npm run build --workspace=@fremwork/site-api",
+    "test": "node tests/launch.test.cjs"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

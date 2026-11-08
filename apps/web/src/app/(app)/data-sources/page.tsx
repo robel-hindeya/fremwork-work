@@ -11,7 +11,7 @@ export default function DataSources() {
   return (
     <div className="page">
       <PageHeader eyebrow="Financial tools" title="Data sources" sub="Where Fremwork reads your numbers from." />
-      <Banner tone="info" title="Automatic connections aren’t available yet.">For now, <Link href="/transactions">add transactions yourself</Link> or <Link href="/chat">tell the AI in chat</Link>.</Banner>
+      <Banner tone="info" title="Automatic connections aren’t available yet.">For now, <Link href="/transactions">add transactions yourself</Link> and <Link href="/chat">ask the AI to analyze them</Link>.</Banner>
       <section className="card">
         <div className="card-head"><div><h2>Connections</h2><p>Planned integrations</p></div></div>
         {INTEGRATIONS.map((s) => {

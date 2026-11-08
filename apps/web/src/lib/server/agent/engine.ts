@@ -20,7 +20,6 @@ export class AgentError extends Error {
 
 const MAX_TURNS = 8;
 const DEFAULT_DAILY_LIMIT = 50;
-const FALLBACK_MODEL = "gemini-3.5-flash-lite";
 const API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models";
 
 const MODE_HINT: Record<string, string> = {
@@ -59,54 +58,14 @@ const GEMINI_TOOLS = [
       },
     },
   },
-  {
-    name: "add_transaction",
-    description: "Record a transaction in the ledger. Only use when the user explicitly asks to record one.",
-    parameters: {
-      type: "OBJECT",
-      properties: {
-        name: { type: "STRING", description: "Payee or customer name" },
-        amount: { type: "NUMBER", description: "Amount: positive for income, negative for an expense" },
-        category: { type: "STRING", description: "Category, e.g. Sales, Services, Payroll, Software, Marketing, Travel, Office" },
-        memo: { type: "STRING", description: "Description or purpose" },
-        date: { type: "STRING", description: "ISO date YYYY-MM-DD. Defaults to today." },
-      },
-      required: ["name", "amount", "category"],
-    },
-  },
+
   {
     name: "get_budgets_status",
     description: "List all budgets with this month's spending and utilization.",
     parameters: { type: "OBJECT", properties: {} },
   },
-  {
-    name: "create_budget",
-    description: "Create a monthly budget for a category. Only use when the user explicitly asks.",
-    parameters: {
-      type: "OBJECT",
-      properties: {
-        category: { type: "STRING", description: "Category name" },
-        budget: { type: "NUMBER", description: "Monthly budget amount" },
-        owner: { type: "STRING", description: "Team or person responsible" },
-      },
-      required: ["category", "budget"],
-    },
-  },
-  {
-    name: "create_goal",
-    description: "Create a financial goal. Only use when the user explicitly asks.",
-    parameters: {
-      type: "OBJECT",
-      properties: {
-        name: { type: "STRING", description: "Goal title" },
-        type: { type: "STRING", description: "Savings target, Revenue target, or Expense reduction" },
-        target: { type: "NUMBER", description: "Target amount" },
-        current: { type: "NUMBER", description: "Current amount" },
-        date: { type: "STRING", description: "Target date YYYY-MM-DD" },
-      },
-      required: ["name", "target", "date"],
-    },
-  },
+
+
   {
     name: "run_scenario_analysis",
     description: "Simulate the runway impact of a hire, a spending change or a revenue change.",
@@ -123,10 +82,7 @@ const GEMINI_TOOLS = [
 const TOOL_IMPL: Record<string, string> = {
   get_financial_health: "getFinancialHealth",
   search_transactions: "searchTransactions",
-  add_transaction: "addTransaction",
   get_budgets_status: "getBudgetsStatus",
-  create_budget: "createBudget",
-  create_goal: "createGoal",
   run_scenario_analysis: "runScenarioAnalysis",
 };
 
@@ -144,27 +100,28 @@ async function executeTool(name: string, args: any): Promise<any> {
 }
 
 async function failure(response: Response): Promise<AgentError> {
-  const body: any = await response.json().catch(() => ({}));
-  const detail = body?.error?.message || response.statusText;
-  if (response.status === 400 && /api key/i.test(detail)) return new AgentError(`Google rejected the Gemini API key: ${detail}`);
-  if (response.status === 401 || response.status === 403) return new AgentError(`Google rejected the Gemini API key: ${detail} Create a new key at https://aistudio.google.com/apikey, put it in apps/web/.env.local as GEMINI_API_KEY, and try again.`);
-  if (response.status === 429) return new AgentError(`Gemini's rate limit or quota was reached: ${detail}`);
-  if (response.status === 404) return new AgentError(`Gemini couldn't find this model. Check GEMINI_MODEL in apps/web/.env.local. ${detail}`);
-  return new AgentError(`Gemini returned an error (${response.status}): ${detail}`);
+  // Provider payloads can contain account details. Only expose bounded, generic errors.
+  if (response.status === 401 || response.status === 403) return new AgentError("The AI connection is unavailable. Please contact support.", 503);
+  if (response.status === 429) return new AgentError("The AI service is busy. Please try again shortly.", 429);
+  if (response.status === 404) return new AgentError("The configured AI model is unavailable. Please contact support.", 503);
+  return new AgentError("The AI service could not complete this request. Please try again.");
 }
 
 /** Runs the tool-calling loop. `history` is the conversation so far and must end with the user's new message. */
 export async function runFinancialAgent(history: ChatTurn[], mode: string = "Balanced"): Promise<AgentResponse> {
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-  if (!apiKey || apiKey.includes("your_")) {
-    throw new AgentError("The AI isn't connected yet. Add GEMINI_API_KEY to apps/web/.env.local and try again.");
+  if (!apiKey || /your[-_]|placeholder/i.test(apiKey)) {
+    throw new AgentError("The AI is not connected yet. Please try again once your administrator has configured it.", 503);
   }
   const dailyLimit = Number(process.env.AI_DAILY_LIMIT) || DEFAULT_DAILY_LIMIT;
   if ((await db.rpc<number>("bump_ai_usage")) > dailyLimit) {
     throw new AgentError(`You've reached today's limit of ${dailyLimit} AI requests. It resets at midnight UTC.`, 429);
   }
 
-  const model = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+  const model = process.env.GEMINI_MODEL;
+  if (!model || !/^[a-zA-Z0-9._-]+$/.test(model)) {
+    throw new AgentError("The AI model is not configured. Please contact support.", 503);
+  }
 
   const today = new Date().toISOString().split("T")[0];
   const systemInstruction = {
@@ -173,19 +130,20 @@ export async function runFinancialAgent(history: ChatTurn[], mode: string = "Bal
         text: `You are Fremwork AI, a financial copilot for founders, CFOs and accountants. Today is ${today}.
 Use your tools to read the user's real ledger. Never invent, estimate or assume financial figures: every number must come from a tool result or from the user.
 If the ledger has no data for a question, say so plainly and suggest adding transactions.
-Use the calculate tool for arithmetic. Only change data when the user explicitly asks you to.
+Use the calculate tool for arithmetic. You have read-only access. Never claim to create or change records. Ask the user to use the ledger forms for changes.
 Format answers in clean Markdown, with tables and bullet points where helpful. ${MODE_HINT[mode] ?? MODE_HINT.Balanced}`,
       },
     ],
   };
 
-  const contents: any[] = history.map((t) => ({ role: t.role === "ai" ? "model" : "user", parts: [{ text: t.text }] }));
+  const contents: any[] = history.slice(-40).map((t) => ({ role: t.role === "ai" ? "model" : "user", parts: [{ text: t.text }] }));
   const toolCalls: AgentResponse["toolCalls"] = [];
   const actionsTaken: string[] = [];
 
   const call = (m: string) =>
     fetch(`${API_ROOT}/${m}:generateContent`, {
       method: "POST",
+      signal: AbortSignal.timeout(20000),
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify({ systemInstruction, contents, tools: [{ functionDeclarations: GEMINI_TOOLS }] }),
     });
@@ -194,9 +152,12 @@ Format answers in clean Markdown, with tables and bullet points where helpful. $
     let response: Response;
     try {
       response = await call(model);
-      if (response.status === 503 || response.status === 429) response = await call(FALLBACK_MODEL);
+      if ([429, 503].includes(response.status)) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        response = await call(model);
+      }
     } catch {
-      throw new AgentError("Couldn't reach Gemini. Check your internet connection and try again.");
+      throw new AgentError("The AI service did not respond in time. Please try again.");
     }
     if (!response.ok) throw await failure(response);
 

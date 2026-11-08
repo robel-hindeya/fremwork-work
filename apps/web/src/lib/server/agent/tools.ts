@@ -1,6 +1,5 @@
 import { TransactionsRepo } from "../repositories/transactions";
 import { BudgetsRepo } from "../repositories/budgets";
-import { GoalsRepo } from "../repositories/goals";
 import { FinancialService } from "../services/analytics";
 
 export interface ToolDefinition {
@@ -23,7 +22,7 @@ export const FINANCIAL_AGENT_TOOLS: Record<string, ToolDefinition> = {
       const items = await TransactionsRepo.getAll({
         search: args.search,
         cat: args.category,
-        limit: args.limit ? Number(args.limit) : 10,
+        limit: Math.min(100, Math.max(1, Math.floor(Number(args.limit) || 10))),
       });
       return {
         count: items.length,
@@ -40,34 +39,7 @@ export const FINANCIAL_AGENT_TOOLS: Record<string, ToolDefinition> = {
     },
   },
 
-  addTransaction: {
-    name: "addTransaction",
-    description: "Record a new expense or revenue transaction into the ledger.",
-    parameters: {
-      name: "Payee or customer name",
-      amount: "Amount in USD (positive for income, negative for expense)",
-      category: "Category name (Software, Marketing, Travel, Subscriptions, Services, etc.)",
-      date: "ISO date YYYY-MM-DD",
-      memo: "Description or purpose",
-    },
-    execute: async (args) => {
-      const amt = Number(args.amount);
-      const created = await TransactionsRepo.create({
-        name: args.name,
-        amt,
-        cat: args.category || "Other expense",
-        date: args.date || new Date().toISOString().split("T")[0],
-        memo: args.memo || "Recorded by Fremwork AI Agent",
-        method: args.method || "Other",
-        status: "Cleared",
-      });
-      return {
-        success: true,
-        transaction: created,
-        message: `Successfully recorded ${created.id}: ${created.name} for $${Math.abs(created.amt).toLocaleString()}`,
-      };
-    },
-  },
+
 
   getFinancialHealth: {
     name: "getFinancialHealth",
@@ -115,53 +87,9 @@ export const FINANCIAL_AGENT_TOOLS: Record<string, ToolDefinition> = {
     },
   },
 
-  createBudget: {
-    name: "createBudget",
-    description: "Set a monthly spending budget limit for a category.",
-    parameters: {
-      category: "Category name",
-      budget: "Monthly budget amount in USD",
-      owner: "Team or person responsible",
-    },
-    execute: async (args) => {
-      const created = await BudgetsRepo.create({
-        k: args.category,
-        budget: Number(args.budget),
-        owner: args.owner || "Finance Team",
-      });
-      return {
-        success: true,
-        budget: created,
-        message: `Set monthly budget of $${created.budget.toLocaleString()} for ${created.k}`,
-      };
-    },
-  },
 
-  createGoal: {
-    name: "createGoal",
-    description: "Create a new financial target (savings, revenue, or expense reduction).",
-    parameters: {
-      name: "Goal title",
-      type: "Savings target | Revenue target | Expense reduction",
-      target: "Target dollar amount",
-      current: "Current dollar amount",
-      date: "Target completion date YYYY-MM-DD",
-    },
-    execute: async (args) => {
-      const created = await GoalsRepo.create({
-        name: args.name,
-        type: args.type || "Savings target",
-        cur: Number(args.current || 0),
-        target: Number(args.target),
-        date: args.date,
-      });
-      return {
-        success: true,
-        goal: created,
-        message: `Established goal "${created.name}" targeting $${created.target.toLocaleString()}`,
-      };
-    },
-  },
+
+
 
   runScenarioAnalysis: {
     name: "runScenarioAnalysis",

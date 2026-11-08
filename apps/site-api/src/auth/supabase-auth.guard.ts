@@ -25,16 +25,11 @@ export class SupabaseAuthGuard implements CanActivate {
       .eq('id', data.user.id)
       .maybeSingle();
 
-    const isEmbeddedAdmin = (data.user.email ?? '').toLowerCase() === 'edomiyastesfaye321@gmail.com';
-    const role = isEmbeddedAdmin && (!profile?.role || profile.role === 'member')
-      ? 'owner'
-      : (profile?.role ?? 'member');
-
     const user: AuthUser = {
       id: data.user.id,
       email: data.user.email ?? '',
       name: profile?.full_name ?? (data.user.user_metadata?.full_name as string | undefined) ?? '',
-      role,
+      role: profile?.role ?? 'member',
     };
     req.user = user;
     return true;

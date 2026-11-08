@@ -5,6 +5,11 @@ import { AppModule } from './app.module';
 import { FremworkExceptionFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
+  // This prototype still uses seeded in-memory records and unverified workspace selectors.
+  // The production workspace uses apps/web/src/app/api with per-user Supabase RLS.
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('The prototype NestJS AI API is disabled in production. Deploy apps/web with its built-in API.');
+  }
   const logger = new Logger('FremworkBootstrap');
   const app = await NestFactory.create(AppModule);
 

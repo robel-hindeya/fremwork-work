@@ -113,21 +113,7 @@ export class ChatService {
           },
         },
       },
-      {
-        name: 'record_transaction',
-        description: 'Record a new revenue or expense transaction into the unified ledger.',
-        input_schema: {
-          type: 'object',
-          properties: {
-            payee: { type: 'string', description: 'Name of the payee or entity' },
-            amount_dollars: { type: 'number', description: 'Amount in USD (+ for revenue, - for expense)' },
-            category: { type: 'string', description: 'Category name' },
-            date: { type: 'string', description: 'ISO Date YYYY-MM-DD' },
-            memo: { type: 'string', description: 'Memo or description' },
-          },
-          required: ['payee', 'amount_dollars', 'category'],
-        },
-      },
+
       {
         name: 'get_financial_summary',
         description: 'Fetch cash balance, revenue, expenses, net profit, and runway months.',
@@ -144,19 +130,7 @@ export class ChatService {
           properties: {},
         },
       },
-      {
-        name: 'create_budget',
-        description: 'Establish a new monthly department budget limit.',
-        input_schema: {
-          type: 'object',
-          properties: {
-            category: { type: 'string', description: 'Department or category name' },
-            amount_dollars: { type: 'number', description: 'Monthly budget limit in USD' },
-            owner: { type: 'string', description: 'Department owner label' },
-          },
-          required: ['category', 'amount_dollars'],
-        },
-      },
+
       {
         name: 'simulate_scenario',
         description: 'Simulate financial runway impact under hiring, spending increases, or revenue changes.',
@@ -217,23 +191,7 @@ export class ChatService {
         };
       }
 
-      case 'record_transaction': {
-        const amt = Number(input.amount_dollars);
-        const tx = this.ledgerService.create(workspaceId, {
-          payee: input.payee,
-          amountMinor: Math.round(amt * 100),
-          categoryName: input.category,
-          date: input.date || new Date().toISOString().split('T')[0],
-          memo: input.memo || 'Recorded via Fremwork AI',
-          method: 'Corporate card ··4417',
-          status: 'cleared',
-        });
-        return {
-          success: true,
-          transactionId: tx.id,
-          message: `Recorded ${tx.id}: ${tx.payee} for $${Math.abs(amt).toLocaleString()}`,
-        };
-      }
+
 
       case 'get_financial_summary': {
         const figures = this.ledgerService.getOverviewFigures(workspaceId);
@@ -265,18 +223,7 @@ export class ChatService {
         });
       }
 
-      case 'create_budget': {
-        const budget = this.budgetsService.create(workspaceId, {
-          categoryName: input.category,
-          budget: input.amount_dollars,
-          owner: input.owner || 'Management',
-        });
-        return {
-          success: true,
-          budgetId: budget.id,
-          message: `Budget created for ${budget.categoryName} at $${(budget.amountMinor / 100).toLocaleString()}/month`,
-        };
-      }
+
 
       case 'simulate_scenario': {
         const figures = this.ledgerService.getOverviewFigures(workspaceId);
@@ -463,21 +410,7 @@ Always invoke the calculate tool for arithmetic steps. Return valid JSON blocks.
           },
         },
       },
-      {
-        name: 'record_transaction',
-        description: 'Record a new revenue or expense transaction into the unified ledger.',
-        parameters: {
-          type: 'OBJECT',
-          properties: {
-            payee: { type: 'STRING', description: 'Name of the payee or entity' },
-            amount_dollars: { type: 'NUMBER', description: 'Amount in USD (+ for revenue, - for expense)' },
-            category: { type: 'STRING', description: 'Category name' },
-            date: { type: 'STRING', description: 'ISO Date YYYY-MM-DD' },
-            memo: { type: 'STRING', description: 'Memo or description' },
-          },
-          required: ['payee', 'amount_dollars', 'category'],
-        },
-      },
+
       {
         name: 'get_financial_summary',
         description: 'Fetch cash balance, revenue, expenses, net profit, and runway months.',
@@ -494,19 +427,7 @@ Always invoke the calculate tool for arithmetic steps. Return valid JSON blocks.
           properties: {},
         },
       },
-      {
-        name: 'create_budget',
-        description: 'Establish a new monthly department budget limit.',
-        parameters: {
-          type: 'OBJECT',
-          properties: {
-            category: { type: 'STRING', description: 'Department or category name' },
-            amount_dollars: { type: 'NUMBER', description: 'Monthly budget limit in USD' },
-            owner: { type: 'STRING', description: 'Department owner label' },
-          },
-          required: ['category', 'amount_dollars'],
-        },
-      },
+
       {
         name: 'simulate_scenario',
         description: 'Simulate financial runway impact under hiring, spending increases, or revenue changes.',

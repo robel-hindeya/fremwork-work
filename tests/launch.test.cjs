@@ -1,0 +1,148 @@
+require('./register.cjs');
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { NextRequest } = require('next/server');
+const auth = require('../apps/web/src/lib/server/auth.ts');
+const { db, userScope } = require('../apps/web/src/lib/server/db.ts');
+const { trustedHandoffOrigin, sameOriginRequest } = require('../apps/web/src/lib/server/origins.ts');
+const { POST: handoff } = require('../apps/web/src/app/api/auth/session/route.ts');
+const { proxy } = require('../apps/web/src/proxy.ts');
+const { FINANCIAL_AGENT_TOOLS } = require('../apps/web/src/lib/server/agent/tools.ts');
+const { runFinancialAgent } = require('../apps/web/src/lib/server/agent/engine.ts');
+const { AdminGuard } = require('../apps/site-api/src/auth/admin.guard.ts');
+const { SupabaseAuthGuard } = require('../apps/site-api/src/auth/supabase-auth.guard.ts');
+const { MeController } = require('../apps/site-api/src/auth/me.controller.ts');
+const { getPostLoginRedirect, checkIsAdmin } = require('../apps/site/lib/auth-dest.ts');
+const context = (req) => ({ switchToHttp: () => ({ getRequest: () => req }) });
+const profileClient = (role, error = null) => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: role ? { role } : null, error }) }) }) }) });
+const json = (data, status = 200) => Response.json(data, { status });
+const oldFetch = global.fetch;
+const mockFetch = async (fn, body) => { global.fetch = fn; try { await body(); } finally { global.fetch = oldFetch; } };
+
+test('admin guards deny email-only privileges, preserve database roles, and fail closed', async () => {
+  const member = { id: 'member-id', email: 'edomiyastesfaye321@gmail.com', role: 'member' };
+  assert.throws(() => new AdminGuard().canActivate(context({ user: member })));
+  for (const role of ['owner', 'admin']) assert.equal(new AdminGuard().canActivate(context({ user: { ...member, role } })), true);
+  assert.equal(new MeController().me(member).isAdmin, false);
+  const service = { db: { ...profileClient('member'), auth: { getUser: async () => ({ data: { user: member }, error: null }) } } };
+  const req = { headers: { authorization: 'Bearer test-token' } };
+  await new SupabaseAuthGuard(service).canActivate(context(req));
+  assert.equal(req.user.role, 'member');
+  assert.equal(await checkIsAdmin(profileClient(null, { message: 'unavailable' }), member), false);
+});
+
+test('routing uses explicit admin intent and rejects external or malformed destinations', async () => {
+  const user = { id: 'u1' };
+  assert.equal(await getPostLoginRedirect(profileClient('owner'), user), '/open-app');
+  assert.equal(await getPostLoginRedirect(profileClient('owner'), user, '/open-app'), '/open-app');
+  assert.equal(await getPostLoginRedirect(profileClient('owner'), user, '/admin'), '/admin');
+  assert.equal(await getPostLoginRedirect(profileClient('member'), user, '/admin'), '/open-app');
+  for (const next of ['//evil.example', '/\\evil.example', '/admin/../admin', 'https://evil.example']) {
+    assert.equal(await getPostLoginRedirect(profileClient('owner'), user, next), '/open-app');
+  }
+});
+
+test('origins require an exact allowlist match', () => {
+  assert.equal(trustedHandoffOrigin('https://fremwork.com', 'https://app.fremwork.com'), true);
+  for (const origin of [null, 'null', 'https://fremwork.com.evil.example', 'https://other.vercel.app']) assert.equal(trustedHandoffOrigin(origin, 'https://app.fremwork.com'), false);
+  assert.equal(sameOriginRequest(null, 'https://app.fremwork.com'), false);
+});
+
+test('tenant requests bind both the bearer token and user filter, including hostile filters', async () => {
+  const calls = [];
+  await mockFetch(async (url, init) => { calls.push({ url: new URL(url), init }); return json([]); }, async () => {
+    await assert.rejects(db.select('ledger_transactions'), /No signed-in/);
+    await Promise.all(['alice', 'bob'].map((userId) => userScope.run({ userId, token: `${userId}-token` }, () => db.select('ledger_transactions', { user_id: 'eq.victim' }))));
+  });
+  assert.equal(calls.length, 2);
+  for (const { url, init } of calls) {
+    const user = init.headers.Authorization.split(' ')[1].split('-')[0];
+    assert.equal(url.searchParams.get('user_id'), `eq.${user}`);
+  }
+});
+
+test('handoff rotates a paired session into HttpOnly cookies with no credentials in the redirect', async () => {
+  const form = new URLSearchParams({ access_token: 'access-test', refresh_token: 'refresh-test' });
+  const req = new NextRequest('https://app.fremwork.com/api/auth/session', { method: 'POST', headers: { origin: 'https://fremwork.com', 'content-type': 'application/x-www-form-urlencoded' }, body: form });
+  await mockFetch(async (url) => String(url).includes('/token?')
+    ? json({ access_token: 'new-access-test', refresh_token: 'new-refresh-test', expires_in: 3600 })
+    : json({ id: 'u1', email: 'test@example.invalid', email_confirmed_at: '2026-01-01' }), async () => {
+    const res = await handoff(req);
+    assert.equal(res.status, 303);
+    assert.equal(res.headers.get('location'), 'https://app.fremwork.com/chat');
+    assert.match(res.headers.get('set-cookie'), /HttpOnly/i);
+    assert.equal(res.headers.get('cache-control'), 'no-store');
+  });
+  const hostile = new NextRequest(req.url, { method: 'POST', headers: { origin: 'https://evil.example' } });
+  assert.equal((await handoff(hostile)).status, 403);
+});
+
+test('handoff rejects refresh tokens belonging to another identity', async () => {
+  let users = 0;
+  await mockFetch(async (url) => String(url).includes('/token?')
+    ? json({ access_token: 'other-access', refresh_token: 'other-refresh', expires_in: 3600 })
+    : json({ id: ++users === 1 ? 'u1' : 'u2', email_confirmed_at: '2026-01-01' }), async () => {
+    const req = new NextRequest('https://app.fremwork.com/api/auth/session', { method: 'POST', headers: { origin: 'https://fremwork.com' }, body: new URLSearchParams({ access_token: 'test', refresh_token: 'other' }) });
+    const res = await handoff(req);
+    assert.equal(res.status, 303);
+    assert.match(res.headers.get('location'), /session_expired/);
+    assert.equal(res.headers.get('set-cookie'), null);
+  });
+});
+
+test('expired and forged sessions cannot open private pages or APIs; cross-site writes are rejected', async () => {
+  await mockFetch(async () => json({ error: 'expired' }, 401), async () => {
+    const page = await proxy(new NextRequest('https://app.fremwork.com/chat', { headers: { cookie: 'fremwork_access=forged; fremwork_refresh=expired' } }));
+    assert.match(page.headers.get('location'), /\/sign-in$/);
+    assert.equal((await proxy(new NextRequest('https://app.fremwork.com/api/chat'))).status, 401);
+    assert.equal((await proxy(new NextRequest('https://app.fremwork.com/api/transactions', { method: 'POST', headers: { origin: 'https://evil.example' } }))).status, 403);
+  });
+});
+
+test('agent is read-only, processes bounded tools, and never executes a provider-requested mutation', async () => {
+  for (const name of ['addTransaction', 'createBudget', 'createGoal']) assert.equal(FINANCIAL_AGENT_TOOLS[name], undefined);
+  const previous = { key: process.env.GEMINI_API_KEY, model: process.env.GEMINI_MODEL };
+  process.env.GEMINI_API_KEY = 'test-provider-key'; process.env.GEMINI_MODEL = 'test-model';
+  let providerCalls = 0;
+  try {
+    await mockFetch(async (url, init) => {
+      if (String(url).includes('/rpc/')) return json(1);
+      assert.match(String(url), /generativelanguage.googleapis.com/);
+      const request = JSON.parse(init.body);
+      assert.equal(request.tools[0].functionDeclarations.some((t) => /add_transaction|create_budget|create_goal/.test(t.name)), false);
+      return ++providerCalls === 1 ? json({ candidates: [{ content: { parts: [{ functionCall: { name: 'add_transaction', args: { amount: 100 } } }] } }] })
+        : json({ candidates: [{ content: { parts: [{ text: 'Use the ledger form to record this.' }] } }] });
+    }, async () => {
+      const result = await userScope.run({ userId: 'test-user', token: 'test-token' }, () => runFinancialAgent([{ role: 'user', text: 'Record income' }]));
+      assert.equal(result.actionsTaken.length, 0);
+      assert.match(result.toolCalls[0].result.error, /Unknown tool/);
+    });
+  } finally {
+    for (const [name, val] of [['GEMINI_API_KEY', previous.key], ['GEMINI_MODEL', previous.model]]) if (val === undefined) delete process.env[name]; else process.env[name] = val;
+  }
+});
+
+const { transactionError } = require('../apps/web/src/lib/server/validation.ts');
+test('manual ledger validation rejects nonfinite, coerced, fractional-cent and invalid-date records', () => {
+  const valid = { name: 'Test only', amt: -12.34, date: '2026-11-08' };
+  assert.equal(transactionError(valid), null);
+  for (const patch of [{ amt: NaN }, { amt: Infinity }, { amt: '12.00' }, { amt: 0.001 }, { amt: 1e15 }, { date: '2026-02-30' }, { name: {} }, { status: 'invented' }]) {
+    assert.ok(transactionError({ ...valid, ...patch }));
+  }
+  assert.equal(transactionError({ amt: 14.5 }, true), null);
+});
+
+test('session refresh is forwarded to the current request and persisted; logout clears both cookies', async () => {
+  const { POST: logout } = require('../apps/web/src/app/api/auth/me/route.ts');
+  await mockFetch(async (url) => String(url).includes('/token?')
+    ? json({ access_token: 'fresh-test', refresh_token: 'rotated-test', expires_in: 3600 })
+    : json({}), async () => {
+    const response = await proxy(new NextRequest('https://app.fremwork.com/chat', { headers: { cookie: 'fremwork_refresh=valid-test' } }));
+    assert.match(response.headers.get('set-cookie'), /fremwork_access=fresh-test/);
+    assert.match(response.headers.get('x-middleware-request-cookie'), /fremwork_access=fresh-test/);
+    const signedOut = await logout(new NextRequest('https://app.fremwork.com/api/auth/me', { method: 'POST', headers: { cookie: 'fremwork_access=fresh-test' } }));
+    assert.equal(signedOut.status, 200);
+    assert.equal(signedOut.cookies.get('fremwork_access').value, '');
+    assert.equal(signedOut.cookies.get('fremwork_refresh').value, '');
+  });
+});

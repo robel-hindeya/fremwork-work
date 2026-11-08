@@ -1,3 +1,4 @@
+import { sameOriginRequest } from "@/lib/server/origins";
 import { NextResponse, type NextRequest } from "next/server";
 import { ACCESS_COOKIE, REFRESH_COOKIE, refreshSession, setSessionCookies, verifyAccessToken } from "@/lib/server/auth";
 
@@ -7,6 +8,12 @@ const isPublic = (path: string) => path.startsWith("/api/auth/") || PUBLIC_PATHS
 /** Keeps sessions fresh and sends anyone who isn't signed in to the sign-in page. */
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && pathname !== '/api/auth/session'
+    && !sameOriginRequest(req.headers.get('origin'), req.nextUrl.origin)) {
+    return NextResponse.json({ success: false, error: 'Untrusted request origin.' }, { status: 403 });
+  }
+  // A cross-site handoff must reach its handler before existing sessions are refreshed.
+  if (pathname === '/api/auth/session') return NextResponse.next();
 
   if (await verifyAccessToken(req.cookies.get(ACCESS_COOKIE)?.value)) return NextResponse.next();
 

@@ -6,7 +6,7 @@ try { process.loadEnvFile(path.resolve(process.cwd(), '../../.env')); } catch {}
 /** @type {import('next').NextConfig} */
 const API_URL = process.env.API_URL;
 // Sign-up and login live on the Fremwork website, which hands the session back to /auth/callback.
-const LANDING_URL = process.env.LANDING_URL || 'https://www.fremwork.com';
+const LANDING_URL = process.env.LANDING_URL || 'https://fremwork.com';
 
 const nextConfig = {
   reactStrictMode: true,

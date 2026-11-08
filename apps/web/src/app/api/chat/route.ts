@@ -4,6 +4,7 @@ import { ChatRepo } from "@/lib/server/repositories/chat";
 import { AgentError, runFinancialAgent } from "@/lib/server/agent/engine";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 export const GET = authed(async () => {
   try {
@@ -18,6 +19,11 @@ export const POST = authed(async (req: NextRequest) => {
   try {
     const { conversationId, text, files, mode = "Balanced", retry = false } = await req.json();
 
+    if ((text !== undefined && typeof text !== 'string') || (text?.length || 0) > 20000
+      || (conversationId !== undefined && (typeof conversationId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(conversationId)))
+      || (files !== undefined && (!Array.isArray(files) || files.length > 10))) {
+      return NextResponse.json({ success: false, error: 'Invalid chat request.' }, { status: 400 });
+    }
     const q = (text || "").trim() || (files?.length ? "Analyze the attached file." : "");
     if (!q) {
       return NextResponse.json({ success: false, error: "Empty message" }, { status: 400 });

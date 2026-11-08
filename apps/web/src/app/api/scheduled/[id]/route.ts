@@ -5,6 +5,7 @@ import { ChatRepo } from "@/lib/server/repositories/chat";
 import { TasksRepo } from "@/lib/server/repositories/tasks";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 /** Run a task now: send its prompt to the AI and save the result as a new chat. */
 export const POST = authed(async (req: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
