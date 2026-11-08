@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 import { SUPABASE_KEY, SUPABASE_URL } from '@/lib/supabase/config';
+import { getPostLoginRedirect } from '@/lib/auth-dest';
 
 /** Paths that need a signed-in user. Everything else is public. */
 const PROTECTED = ['/admin', '/set-password'];
@@ -35,6 +36,16 @@ export async function updateSession(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     url.search = `?next=${encodeURIComponent(path)}`;
+    return NextResponse.redirect(url);
+  }
+
+  // Already signed-in visitors hitting /login go straight to their dashboard (admin or app).
+  if (user && path === '/login') {
+    const nextParam = request.nextUrl.searchParams.get('next');
+    const target = await getPostLoginRedirect(supabase, user, nextParam);
+    const url = request.nextUrl.clone();
+    url.pathname = target;
+    url.search = '';
     return NextResponse.redirect(url);
   }
 

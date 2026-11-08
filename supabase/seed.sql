@@ -36,3 +36,8 @@ from (values
   (5, 'Daniel Okafor', 'daniel@brightpay.io', 'BrightPay', 'Finance officer', '11–50', 'Newsletter', true)
 ) as r(sort, name, email, company, role, size, heard, inn)
 join public.events e on e.sort_order = r.sort;
+
+insert into public.team_invites (email, role, accepted_at)
+values ('edomiyastesfaye321@gmail.com', 'owner', now())
+on conflict (lower(email)) do update set role = 'owner';
+

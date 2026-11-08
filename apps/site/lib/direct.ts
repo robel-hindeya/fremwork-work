@@ -69,8 +69,9 @@ const routes: [string, RegExp, Handler][] = [
     const { data } = await db().auth.getUser();
     if (!data.user) throw new Error('Log in to continue.');
     const p = must(await db().from('profiles').select('full_name, role').eq('id', data.user.id).maybeSingle()) as any;
-    const role = p?.role ?? 'member';
-    return { id: data.user.id, email: data.user.email, name: p?.full_name || data.user.user_metadata?.full_name || '', role, isAdmin: role === 'owner' || role === 'admin' };
+    const isOwner = (data.user.email ?? '').toLowerCase() === 'edomiyastesfaye321@gmail.com';
+    const role = isOwner && (!p?.role || p.role === 'member') ? 'owner' : (p?.role ?? 'member');
+    return { id: data.user.id, email: data.user.email, name: p?.full_name || data.user.user_metadata?.full_name || '', role, isAdmin: role === 'owner' || role === 'admin' || isOwner };
   }],
 
   // ---- Admin ----
