@@ -146,3 +146,23 @@ test('session refresh is forwarded to the current request and persisted; logout 
     assert.equal(signedOut.cookies.get('fremwork_refresh').value, '');
   });
 });
+
+test('workspace uses the supplied project and canonical public settings override stale server aliases', () => {
+  const names = ['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY', 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 'FREMWORK_SUPABASE_URL', 'FREMWORK_SUPABASE_PUBLISHABLE_KEY', 'SUPABASE_URL', 'SUPABASE_KEY'];
+  const before = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  const file = require.resolve('../apps/web/src/lib/server/auth.ts');
+  try {
+    names.forEach((name) => delete process.env[name]); delete require.cache[file];
+    assert.equal(require(file).SUPABASE_URL, 'https://jwznteirgsnebvtswppu.supabase.co');
+    process.env.FREMWORK_SUPABASE_URL = 'https://stale.example';
+    process.env.FREMWORK_SUPABASE_PUBLISHABLE_KEY = 'stale-test-key';
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://canonical.example';
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = 'canonical-test-key';
+    delete require.cache[file];
+    assert.equal(require(file).SUPABASE_URL, 'https://canonical.example');
+    assert.equal(require(file).SUPABASE_KEY, 'canonical-test-key');
+  } finally {
+    for (const [name, value] of Object.entries(before)) if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    delete require.cache[file];
+  }
+});

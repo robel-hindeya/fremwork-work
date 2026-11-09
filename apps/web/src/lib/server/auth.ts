@@ -2,8 +2,8 @@ import type { NextResponse } from "next/server";
 import type { User } from "@/lib/data";
 
 // The URL and publishable key are public by design; they only identify the Supabase project.
-export const SUPABASE_URL = process.env.FREMWORK_SUPABASE_URL || process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "https://gwdrtfcqqnvhwolbjkab.supabase.co";
-export const SUPABASE_KEY = process.env.FREMWORK_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "sb_publishable_jzmf0N9Uo3Q2ZYAfAIbWCg_xBzWttHY";
+export const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.FREMWORK_SUPABASE_URL || process.env.SUPABASE_URL || "https://jwznteirgsnebvtswppu.supabase.co";
+export const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.FREMWORK_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_KEY || "sb_publishable_jSU3BbnNVHojq0teQR8j-A_3Au5k5k6";
 
 export const ACCESS_COOKIE = "fremwork_access";
 export const REFRESH_COOKIE = "fremwork_refresh";
