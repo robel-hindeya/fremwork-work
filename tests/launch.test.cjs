@@ -44,7 +44,10 @@ test('routing uses explicit admin intent and rejects external or malformed desti
 
 test('origins require an exact allowlist match', () => {
   assert.equal(trustedHandoffOrigin('https://fremwork.com', 'https://app.fremwork.com'), true);
-  for (const origin of [null, 'null', 'https://fremwork.com.evil.example', 'https://other.vercel.app']) assert.equal(trustedHandoffOrigin(origin, 'https://app.fremwork.com'), false);
+  for (const origin of ['https://www.fremwork.com', 'https://fremwork-land.onrender.com']) {
+    assert.equal(trustedHandoffOrigin(origin, 'https://fremwork-app.onrender.com'), true, `${origin} may hand off to the Render workspace`);
+  }
+  for (const origin of [null, 'null', 'https://fremwork.com.evil.example', 'https://other.vercel.app', 'https://fremwork-land.onrender.com.evil.example', 'http://fremwork-land.onrender.com', 'https://evil.onrender.com']) assert.equal(trustedHandoffOrigin(origin, 'https://app.fremwork.com'), false);
   assert.equal(sameOriginRequest(null, 'https://app.fremwork.com'), false);
 });
 

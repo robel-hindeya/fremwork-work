@@ -18,12 +18,13 @@ export async function POST(req: NextRequest) {
     const session = await refreshSession(refresh);
     const refreshedUser = session && await verifyAccessToken(session.access_token);
     if (!session || refreshedUser?.id !== user.id) throw new Error('Invalid session pair');
-    const response = NextResponse.redirect(new URL('/chat', req.url), 303);
+    // Relative Location: behind Render's proxy req.url is the internal https://localhost:10000.
+    const response = new NextResponse(null, { status: 303, headers: { Location: '/chat' } });
     response.headers.set('Cache-Control', 'no-store');
     response.headers.set('Referrer-Policy', 'no-referrer');
     setSessionCookies(response, session);
     return response;
   } catch {
-    return NextResponse.redirect(new URL('/sign-in?error=session_expired', req.url), 303);
+    return new NextResponse(null, { status: 303, headers: { Location: '/sign-in?error=session_expired', 'Cache-Control': 'no-store' } });
   }
 }

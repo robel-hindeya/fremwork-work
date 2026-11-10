@@ -7,11 +7,22 @@ try { process.loadEnvFile(path.resolve(process.cwd(), '../../.env')); } catch {}
 const API_URL = process.env.API_URL;
 // Sign-up and login live on the Fremwork website, which hands the session back to /auth/callback.
 const LANDING_URL = process.env.LANDING_URL || 'https://fremwork.com';
+// The Render workspace pairs with the Render landing site unless LANDING_URL says otherwise.
+const PAIRED_LANDING = { 'fremwork-app.onrender.com': 'https://fremwork-land.onrender.com' };
+const paired = process.env.LANDING_URL ? [] : Object.entries(PAIRED_LANDING).flatMap(([host, landing]) => {
+  const has = [{ type: 'host', value: host }];
+  return [
+    { source: '/sign-in', has, destination: `${landing}/login`, permanent: false },
+    { source: '/sign-up', has, destination: `${landing}/signup`, permanent: false },
+    { source: '/forgot-password', has, destination: `${landing}/login`, permanent: false },
+  ];
+});
 
 const nextConfig = {
   reactStrictMode: true,
   async redirects() {
     return [
+      ...paired,
       { source: '/sign-in', destination: `${LANDING_URL}/login`, permanent: false },
       { source: '/sign-up', destination: `${LANDING_URL}/signup`, permanent: false },
       { source: '/forgot-password', destination: `${LANDING_URL}/login`, permanent: false },
