@@ -1,12 +1,11 @@
 import { Module } from '@nestjs/common';
 import { LedgerController } from './ledger.controller';
 import { LedgerService } from './ledger.service';
-import { SupabaseModule } from '../supabase/supabase.module';
+import { FinancialService } from './financial.service';
 
 @Module({
-  imports: [SupabaseModule],
   controllers: [LedgerController],
-  providers: [LedgerService],
-  exports: [LedgerService],
+  providers: [LedgerService, FinancialService],
+  exports: [LedgerService, FinancialService],
 })
 export class LedgerModule {}

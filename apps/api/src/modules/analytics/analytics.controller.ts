@@ -1,43 +1,57 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiHeader } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { WorkspaceGuard } from '../../common/guards/workspace.guard';
-import { CurrentWorkspaceId } from '../../common/decorators/current-workspace.decorator';
+import { Ctx } from '../../common/decorators/user-context.decorator';
+import type { UserContext } from '../../common/data/db';
+import { FinancialService, pct } from '../ledger/financial.service';
+
+const TOP_CATEGORIES = 6;
+
+/** The first day of the month eleven months ago, and today: the last twelve months. */
+function defaultRange() {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1));
+  return { from: start.toISOString().slice(0, 10), to: now.toISOString().slice(0, 10) };
+}
 
 @ApiTags('Analytics')
 @ApiBearerAuth()
-@ApiHeader({ name: 'X-Workspace-Id', required: true })
 @Controller('analytics')
 @UseGuards(AuthGuard, WorkspaceGuard)
 export class AnalyticsController {
+  constructor(private readonly financial: FinancialService) {}
+
   @Get()
-  @ApiOperation({ summary: 'Get financial analytics breakdown across custom ranges' })
-  getAnalytics(
-    @CurrentWorkspaceId() wsId: string,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
-  ) {
+  @ApiOperation({ summary: 'Revenue, expenses and expense mix over a date range (default: last 12 months)' })
+  async getAnalytics(@Ctx() ctx: UserContext, @Query('from') from?: string, @Query('to') to?: string) {
+    const range = { ...defaultRange(), ...(from ? { from } : {}), ...(to ? { to } : {}) };
+    const r = await this.financial.range(ctx, range.from, range.to);
+    const net = r.revenueMinor - r.expensesMinor;
+
+    const sorted = Object.entries(r.byCategory).sort((a, b) => b[1] - a[1]);
+    const top = sorted.slice(0, TOP_CATEGORIES);
+    const other = sorted.slice(TOP_CATEGORIES).reduce((a, [, v]) => a + v, 0);
+    const expenseBreakdown = [...top, ...(other > 0 ? [['Other', other] as [string, number]] : [])].map(([category, amountMinor]) => ({
+      category,
+      amountMinor,
+      sharePct: pct(amountMinor, r.expensesMinor),
+    }));
+
     return {
       success: true,
       data: {
-        workspaceId: wsId,
-        dateRange: { from: from || '2025-11-01', to: to || '2026-10-31' },
+        workspaceId: ctx.user.id,
+        hasData: r.count > 0,
+        dateRange: range,
         totals: {
-          revenueMinor: 257770000,
-          expensesMinor: 187660000,
-          netProfitMinor: 70110000,
-          operatingCashFlowMinor: 58590000,
-          netMarginPct: 27.2,
+          revenueMinor: r.revenueMinor,
+          expensesMinor: r.expensesMinor,
+          netProfitMinor: net,
+          operatingCashFlowMinor: r.operatingCashFlowMinor,
+          netMarginPct: pct(net, r.revenueMinor),
         },
-        expenseBreakdown: [
-          { category: 'Payroll', amountMinor: 9420000, sharePct: 52.8 },
-          { category: 'Cost of services', amountMinor: 2186000, sharePct: 12.3 },
-          { category: 'Contractors', amountMinor: 1340000, sharePct: 7.5 },
-          { category: 'Rent & Utilities', amountMinor: 1250000, sharePct: 7.0 },
-          { category: 'Marketing', amountMinor: 1185000, sharePct: 6.6 },
-          { category: 'Software', amountMinor: 964000, sharePct: 5.4 },
-          { category: 'Other', amountMinor: 1485000, sharePct: 8.4 },
-        ],
+        expenseBreakdown,
       },
     };
   }

@@ -1,300 +1,162 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Transaction, MinorUnit, TransactionStatus } from '@fremwork/types';
-import { SupabaseService } from '../supabase/supabase.service';
+import { randomUUID } from 'crypto';
+import type { Transaction, TransactionStatus } from '@fremwork/types';
+import {
+  UserContext, badRequest, dbError, literalLike, minorFrom, quoted, rows, selectAll, text, validDate, validId, defined,
+} from '../../common/data/db';
+
+const TABLE = 'ledger_transactions';
+
+/** Stored as Title case (shared with the web workspace); the API speaks lower case. */
+const STATUSES: Record<TransactionStatus, string> = {
+  cleared: 'Cleared', pending: 'Pending', flagged: 'Flagged', failed: 'Failed', reviewed: 'Reviewed',
+};
+
+export interface TransactionFilter {
+  type?: 'all' | 'income' | 'expense';
+  q?: string;
+  from?: string;
+  to?: string;
+  category?: string;
+  limit?: number;
+}
+
+export interface TransactionTotals {
+  count: number;
+  moneyInMinor: number;
+  moneyOutMinor: number;
+  netMinor: number;
+}
+
+export function toTransaction(r: any, userId: string): Transaction {
+  const cents = Math.round(Number(r.amt) * 100);
+  return {
+    id: r.id,
+    workspaceId: userId,
+    date: r.date,
+    amountMinor: cents,
+    currency: 'USD',
+    payee: r.name,
+    memo: r.memo,
+    categoryName: r.cat,
+    method: r.method,
+    status: (String(r.status).toLowerCase() as TransactionStatus),
+    note: r.note || undefined,
+    createdAt: r.created_at,
+    updatedAt: r.created_at,
+  };
+}
+
+/** Validates an API transaction body and maps it to ledger columns. */
+export function transactionColumns(body: unknown, partial: boolean) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) badRequest('Invalid transaction.');
+  const data = body as Record<string, any>;
+
+  const cents = minorFrom(data, 'amountMinor', ['amount', 'amt']);
+  const name = text(data, ['payee', 'name'], 200);
+  const date = text(data, ['date'], 10);
+  const statusIn = text(data, ['status'], 20);
+
+  if (!partial) {
+    if (!name?.trim()) badRequest('Enter a payee.', 'payee');
+    if (cents === undefined) badRequest('Enter an amount (amountMinor in cents, or amount in dollars).', 'amountMinor');
+  }
+  if (name !== undefined && !name.trim()) badRequest('Enter a payee.', 'payee');
+  if (cents === 0) badRequest('Enter a nonzero amount.', 'amountMinor');
+  if (date !== undefined && !validDate(date)) badRequest('Enter a valid date (YYYY-MM-DD).', 'date');
+
+  let status: string | undefined;
+  if (statusIn !== undefined) {
+    status = STATUSES[statusIn.toLowerCase() as TransactionStatus];
+    if (!status) badRequest(`Status must be one of: ${Object.keys(STATUSES).join(', ')}.`, 'status');
+  }
+
+  return defined({
+    name: name?.trim(),
+    memo: text(data, ['memo']),
+    cat: text(data, ['categoryName', 'cat', 'category'], 100),
+    date,
+    amt: cents === undefined ? undefined : cents / 100,
+    status,
+    method: text(data, ['method'], 100),
+    note: text(data, ['note']),
+  });
+}
 
 @Injectable()
 export class LedgerService {
-  private transactions: Transaction[] = [
-    {
-      id: 'TX-10482',
-      workspaceId: 'default-workspace-harbor-pine',
-      date: '2026-10-30',
-      amountMinor: 4200000, // $42,000.00
-      currency: 'USD',
-      payee: 'Lumen Health',
-      memo: 'Annual subscription',
-      categoryName: 'Subscriptions',
-      method: 'Bank transfer',
-      status: 'cleared',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-    {
-      id: 'TX-10481',
-      workspaceId: 'default-workspace-harbor-pine',
-      date: '2026-10-29',
-      amountMinor: -628417, // -$6,284.17
-      currency: 'USD',
-      payee: 'Amazon Web Services',
-      memo: 'Hosting · October',
-      categoryName: 'Cost of services',
-      method: 'Corporate card ··4417',
-      status: 'cleared',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-    {
-      id: 'TX-10480',
-      workspaceId: 'default-workspace-harbor-pine',
-      date: '2026-10-28',
-      amountMinor: -4710000, // -$47,100.00
-      currency: 'USD',
-      payee: 'Gusto',
-      memo: 'Payroll · Oct 16–31',
-      categoryName: 'Payroll',
-      method: 'ACH',
-      status: 'cleared',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-    {
-      id: 'TX-10479',
-      workspaceId: 'default-workspace-harbor-pine',
-      date: '2026-10-27',
-      amountMinor: 1850000, // $18,500.00
-      currency: 'USD',
-      payee: 'Brightline Retail',
-      memo: 'Implementation, phase 2',
-      categoryName: 'Services',
-      method: 'Invoice INV-2291',
-      status: 'pending',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-    {
-      id: 'TX-10478',
-      workspaceId: 'default-workspace-harbor-pine',
-      date: '2026-10-26',
-      amountMinor: -286000, // -$2,860.00
-      currency: 'USD',
-      payee: 'Ethiopian Airlines',
-      memo: 'ADD → NBO, 2 tickets',
-      categoryName: 'Travel',
-      method: 'Corporate card ··4417',
-      status: 'flagged',
-      note: 'Booked less than 7 days before departure.',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-    {
-      id: 'TX-10477',
-      workspaceId: 'default-workspace-harbor-pine',
-      date: '2026-10-25',
-      amountMinor: -144000, // -$1,440.00
-      currency: 'USD',
-      payee: 'Figma',
-      memo: 'Organization plan',
-      categoryName: 'Software',
-      method: 'Corporate card ··4417',
-      status: 'cleared',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-    {
-      id: 'TX-10476',
-      workspaceId: 'default-workspace-harbor-pine',
-      date: '2026-10-24',
-      amountMinor: 980000, // $9,800.00
-      currency: 'USD',
-      payee: 'Kestrel Logistics',
-      memo: 'Monthly plan',
-      categoryName: 'Subscriptions',
-      method: 'Card via Stripe',
-      status: 'cleared',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-    {
-      id: 'TX-10475',
-      workspaceId: 'default-workspace-harbor-pine',
-      date: '2026-10-23',
-      amountMinor: -375000, // -$3,750.00
-      currency: 'USD',
-      payee: 'Meta Ads',
-      memo: 'Q4 awareness campaign',
-      categoryName: 'Marketing',
-      method: 'Corporate card ··4417',
-      status: 'cleared',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-    {
-      id: 'TX-10474',
-      workspaceId: 'default-workspace-harbor-pine',
-      date: '2026-10-22',
-      amountMinor: 1240000, // $12,400.00
-      currency: 'USD',
-      payee: 'Northwind Labs',
-      memo: 'License renewal',
-      categoryName: 'Licensing',
-      method: 'Invoice INV-2288',
-      status: 'pending',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-    {
-      id: 'TX-10473',
-      workspaceId: 'default-workspace-harbor-pine',
-      date: '2026-10-21',
-      amountMinor: -1120000, // -$11,200.00
-      currency: 'USD',
-      payee: 'Bole Office Park',
-      memo: 'Rent · November',
-      categoryName: 'Rent & Utilities',
-      method: 'Bank transfer',
-      status: 'cleared',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-    {
-      id: 'TX-10472',
-      workspaceId: 'default-workspace-harbor-pine',
-      date: '2026-10-20',
-      amountMinor: -103500, // -$1,035.00
-      currency: 'USD',
-      payee: 'Slack',
-      memo: 'Business+ · 23 seats',
-      categoryName: 'Software',
-      method: 'Corporate card ··4417',
-      status: 'cleared',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-  ];
+  async findAll(ctx: UserContext, filter: TransactionFilter = {}): Promise<{ rows: Transaction[]; totals: TransactionTotals }> {
+    if (filter.from && !validDate(filter.from)) badRequest('from must be a date (YYYY-MM-DD).', 'from');
+    if (filter.to && !validDate(filter.to)) badRequest('to must be a date (YYYY-MM-DD).', 'to');
+    if (filter.type && !['all', 'income', 'expense'].includes(filter.type)) badRequest('type must be all, income or expense.', 'type');
 
-  constructor(private readonly supabase: SupabaseService) {}
+    const all = await selectAll((from, to) => {
+      let q = ctx.db.from(TABLE).select('*').eq('user_id', ctx.user.id);
+      if (filter.type === 'income') q = q.gt('amt', 0);
+      if (filter.type === 'expense') q = q.lt('amt', 0);
+      if (filter.category && filter.category !== 'all') q = q.ilike('cat', literalLike(filter.category));
+      if (filter.from) q = q.gte('date', filter.from);
+      if (filter.to) q = q.lte('date', filter.to);
+      if (filter.q?.trim()) {
+        const s = quoted(`*${filter.q.trim().slice(0, 200)}*`);
+        q = q.or(`name.ilike.${s},memo.ilike.${s},id.ilike.${s}`);
+      }
+      return q.order('date', { ascending: false }).order('id', { ascending: false }).range(from, to);
+    }, 'List transactions');
 
-  findAll(
-    workspaceId: string,
-    filter?: {
-      type?: 'all' | 'income' | 'expense';
-      q?: string;
-      from?: string;
-      to?: string;
-      category?: string;
-      limit?: number;
-    },
-  ): { rows: Transaction[]; totals: { count: number; moneyInMinor: number; moneyOutMinor: number; netMinor: number } } {
-    let rows = this.transactions.filter((t) => t.workspaceId === workspaceId);
-
-    if (filter?.type === 'income') rows = rows.filter((t) => t.amountMinor > 0);
-    if (filter?.type === 'expense') rows = rows.filter((t) => t.amountMinor < 0);
-    if (filter?.category && filter.category !== 'all') {
-      rows = rows.filter((t) => (t.categoryName || '').toLowerCase() === filter.category!.toLowerCase());
-    }
-    if (filter?.from) rows = rows.filter((t) => t.date >= filter.from!);
-    if (filter?.to) rows = rows.filter((t) => t.date <= filter.to!);
-    if (filter?.q) {
-      const search = filter.q.toLowerCase();
-      rows = rows.filter(
-        (t) =>
-          t.payee.toLowerCase().includes(search) ||
-          t.memo.toLowerCase().includes(search) ||
-          t.id.toLowerCase().includes(search),
-      );
-    }
-
-    const moneyIn = rows.filter((r) => r.amountMinor > 0).reduce((a, b) => a + b.amountMinor, 0);
-    const moneyOut = rows.filter((r) => r.amountMinor < 0).reduce((a, b) => a + Math.abs(b.amountMinor), 0);
-
-    const limit = filter?.limit || 100;
+    const list = all.map((r) => toTransaction(r, ctx.user.id));
+    const moneyInMinor = list.filter((t) => t.amountMinor > 0).reduce((a, t) => a + t.amountMinor, 0);
+    const moneyOutMinor = list.filter((t) => t.amountMinor < 0).reduce((a, t) => a - t.amountMinor, 0);
+    const limit = Math.min(500, Math.max(1, Math.floor(Number(filter.limit) || 100)));
     return {
-      rows: rows.slice(0, limit),
-      totals: {
-        count: rows.length,
-        moneyInMinor: moneyIn,
-        moneyOutMinor: moneyOut,
-        netMinor: moneyIn - moneyOut,
-      },
+      rows: list.slice(0, limit),
+      totals: { count: list.length, moneyInMinor, moneyOutMinor, netMinor: moneyInMinor - moneyOutMinor },
     };
   }
 
-  create(workspaceId: string, data: any): Transaction {
-    let amtMinor: MinorUnit = data.amountMinor;
-    if (amtMinor === undefined && data.amount !== undefined) {
-      amtMinor = Math.round(Number(data.amount) * 100);
-    }
-    if (amtMinor === undefined && data.amt !== undefined) {
-      amtMinor = Math.round(Number(data.amt) * 100);
-    }
-    if (amtMinor === undefined) {
-      amtMinor = 0;
-    }
-
-    const id = data.id || `TX-${Math.floor(10000 + Math.random() * 90000)}`;
-    const tx: Transaction = {
-      id,
-      workspaceId,
-      date: data.date || new Date().toISOString().split('T')[0],
-      amountMinor: amtMinor,
-      currency: data.currency || 'USD',
-      payee: data.payee || data.name || 'Manual entry',
-      memo: data.memo || 'Manual ledger entry',
-      categoryName: data.categoryName || data.cat || 'Software',
-      method: data.method || 'Corporate card ··4417',
-      status: (data.status?.toLowerCase() as TransactionStatus) || 'cleared',
-      note: data.note,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    this.transactions.unshift(tx);
-    return tx;
+  async findOne(ctx: UserContext, id: string): Promise<Transaction> {
+    if (!validId(id)) throw this.notFound(id);
+    const found = rows(await ctx.db.from(TABLE).select('*').eq('user_id', ctx.user.id).eq('id', id).limit(1), 'Read transaction');
+    if (!found[0]) throw this.notFound(id);
+    return toTransaction(found[0], ctx.user.id);
   }
 
-  update(workspaceId: string, id: string, patch: any): Transaction {
-    const idx = this.transactions.findIndex((t) => t.id === id && t.workspaceId === workspaceId);
-    if (idx === -1) {
-      throw new NotFoundException({
-        code: 'not_found',
-        message: `Transaction ${id} not found in workspace`,
-      });
-    }
-
-    let amtMinor = patch.amountMinor;
-    if (amtMinor === undefined && patch.amount !== undefined) {
-      amtMinor = Math.round(Number(patch.amount) * 100);
-    }
-    if (amtMinor === undefined && patch.amt !== undefined) {
-      amtMinor = Math.round(Number(patch.amt) * 100);
-    }
-
-    this.transactions[idx] = {
-      ...this.transactions[idx],
-      ...patch,
-      ...(amtMinor !== undefined ? { amountMinor: amtMinor } : {}),
-      ...(patch.name ? { payee: patch.name } : {}),
-      ...(patch.cat ? { categoryName: patch.cat } : {}),
-      updatedAt: new Date().toISOString(),
+  async create(ctx: UserContext, body: unknown): Promise<Transaction> {
+    const cols = transactionColumns(body, false);
+    const requestedId = (body as any).id;
+    if (requestedId !== undefined && !validId(requestedId)) badRequest('Invalid transaction id.', 'id');
+    const row = {
+      id: requestedId || `TX-${randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase()}`,
+      name: cols.name,
+      memo: cols.memo ?? '',
+      cat: cols.cat || 'Uncategorized',
+      date: cols.date ?? new Date().toISOString().slice(0, 10),
+      amt: cols.amt,
+      status: cols.status ?? 'Cleared',
+      method: cols.method || 'Other',
+      note: cols.note ?? null,
     };
-
-    return this.transactions[idx];
+    const { data, error } = await ctx.db.from(TABLE).insert(row).select('*').single();
+    if (error) dbError(error, 'Create transaction');
+    return toTransaction(data, ctx.user.id);
   }
 
-  delete(workspaceId: string, id: string): boolean {
-    const initialLen = this.transactions.length;
-    this.transactions = this.transactions.filter(
-      (t) => !(t.id === id && t.workspaceId === workspaceId),
-    );
-    return this.transactions.length < initialLen;
+  async update(ctx: UserContext, id: string, patch: unknown): Promise<Transaction> {
+    if (!validId(id)) throw this.notFound(id);
+    const cols = transactionColumns(patch, true);
+    if (Object.keys(cols).length === 0) return this.findOne(ctx, id);
+    const updated = rows(await ctx.db.from(TABLE).update(cols).eq('user_id', ctx.user.id).eq('id', id).select('*'), 'Update transaction');
+    if (!updated[0]) throw this.notFound(id);
+    return toTransaction(updated[0], ctx.user.id);
   }
 
-  getOverviewFigures(workspaceId: string) {
-    const txs = this.transactions.filter((t) => t.workspaceId === workspaceId);
-    const cashOnHandMinor = 41260000; // $412,600.00
-    const octoberRevMinor = 24680000; // $246,800.00
-    const octoberExpMinor = 17830000; // $178,300.00
-    const octoberNetMinor = octoberRevMinor - octoberExpMinor;
+  async delete(ctx: UserContext, id: string): Promise<boolean> {
+    if (!validId(id)) return false;
+    const deleted = rows(await ctx.db.from(TABLE).delete().eq('user_id', ctx.user.id).eq('id', id).select('id'), 'Delete transaction');
+    return deleted.length > 0;
+  }
 
-    return {
-      cashOnHandMinor,
-      octoberRevMinor,
-      octoberExpMinor,
-      octoberNetMinor,
-      operatingCashFlowMinor: 5420000,
-      runwayMonths: 2.3,
-      flaggedCount: txs.filter((t) => t.status === 'flagged').length,
-      pendingCount: txs.filter((t) => t.status === 'pending').length,
-    };
+  private notFound(id: string) {
+    return new NotFoundException({ code: 'not_found', message: `Transaction ${String(id).slice(0, 100)} not found.` });
   }
 }

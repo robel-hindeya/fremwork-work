@@ -10,7 +10,7 @@
 - Deploy landing `apps/web` to Vercel project `fremwork-land`; intended domain `fremwork.com`. pnpm 10.12.1, frozen pnpm lockfile, Node 22 target, Next.js 15.
 - Deploy workspace `apps/web` to Vercel project `fremwork-work`; intended domain `app.fremwork.com`. npm lockfile, Next.js 16, Node 22 target. Its Next route handlers provide the production AI and ledger API. Use the app build command, rather than deploying every workspace.
 - Workspace `apps/site` and `apps/site-api` duplicate the landing application; do not deploy them for this launch. Security defects in these copies were also corrected.
-- Workspace `apps/api` is an older NestJS prototype with seeded in-memory finance data and unsafe workspace selection. Its production startup is now blocked. It must not be a production deployment target or the destination of `API_URL`.
+- Workspace `apps/api` was a NestJS prototype with seeded in-memory data. It is now a Supabase-backed backend that runs every query as the signed-in user under row level security, and it can be deployed on its own (see README, Deploy on Render). It refuses to start in production without valid Supabase settings. The web app does not proxy to it: production web builds ignore `API_URL`.
 - Landing `apps/api` is a separate NestJS website API, with its own Vercel adapter. A separate target is needed if using its privileged invitation/email features. Existing public/RLS fallback functions support much of the website without it; those functions and policies must be verified in the shared Supabase project. This fallback is existing behavior, rather than a new launch architecture.
 
 ## Implemented security and authentication changes

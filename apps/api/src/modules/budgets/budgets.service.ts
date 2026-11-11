@@ -1,63 +1,113 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Budget } from '@fremwork/types';
+import type { Budget } from '@fremwork/types';
+import { UserContext, badRequest, dbError, defined, minorFrom, monthKey, newId, rows, selectAll, text, toMinor, validId } from '../../common/data/db';
+
+const TABLE = 'ledger_budgets';
+
+/** The `alert` column holds text such as "90% of budget"; the API exposes the percentage. */
+const alertPct = (alert: unknown) => {
+  const n = parseInt(String(alert ?? ''), 10);
+  return Number.isFinite(n) && n > 0 ? n : 90;
+};
+
+function toBudget(r: any, userId: string, period: string, spent: Record<string, number>): Budget {
+  return {
+    id: r.id,
+    workspaceId: userId,
+    categoryId: r.k,
+    categoryName: r.k,
+    amountMinor: toMinor(r.budget),
+    period,
+    alertAtPct: alertPct(r.alert),
+    ownerLabel: r.owner,
+    spentMinor: spent[String(r.k).toLowerCase()] ?? 0,
+    createdAt: r.created_at,
+  };
+}
+
+function budgetColumns(body: unknown, partial: boolean) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) badRequest('Invalid budget.');
+  const data = body as Record<string, any>;
+  const k = text(data, ['categoryName', 'k', 'category'], 100)?.trim();
+  const cents = minorFrom(data, 'amountMinor', ['budget', 'amount']);
+  const owner = text(data, ['ownerLabel', 'owner'], 100);
+  const pctIn = data.alertAtPct;
+
+  if (!partial && !k) badRequest('Enter a category name.', 'categoryName');
+  if (k !== undefined && !k) badRequest('Enter a category name.', 'categoryName');
+  if (!partial && cents === undefined) badRequest('Enter a budget amount.', 'amountMinor');
+  if (cents !== undefined && cents <= 0) badRequest('The budget must be more than zero.', 'amountMinor');
+  if (pctIn !== undefined && (!Number.isInteger(pctIn) || pctIn < 1 || pctIn > 200)) badRequest('alertAtPct must be a whole number from 1 to 200.', 'alertAtPct');
+
+  return defined({
+    k,
+    budget: cents === undefined ? undefined : cents / 100,
+    owner,
+    alert: pctIn === undefined ? text(data, ['alert'], 100) : `${pctIn}% of budget`,
+  });
+}
 
 @Injectable()
 export class BudgetsService {
-  private budgets: Budget[] = [
-    { id: 'b-1', workspaceId: 'default-workspace-harbor-pine', categoryId: 'cat-1', categoryName: 'Payroll', amountMinor: 9500000, period: '2026-10', alertAtPct: 90, ownerLabel: 'People', spentMinor: 9420000, createdAt: new Date().toISOString() },
-    { id: 'b-2', workspaceId: 'default-workspace-harbor-pine', categoryId: 'cat-2', categoryName: 'Cost of services', amountMinor: 2400000, period: '2026-10', alertAtPct: 90, ownerLabel: 'Hosting & delivery', spentMinor: 2186000, createdAt: new Date().toISOString() },
-    { id: 'b-3', workspaceId: 'default-workspace-harbor-pine', categoryId: 'cat-3', categoryName: 'Software', amountMinor: 800000, period: '2026-10', alertAtPct: 90, ownerLabel: 'Operations', spentMinor: 964000, createdAt: new Date().toISOString() },
-    { id: 'b-4', workspaceId: 'default-workspace-harbor-pine', categoryId: 'cat-4', categoryName: 'Marketing', amountMinor: 1400000, period: '2026-10', alertAtPct: 90, ownerLabel: 'Growth', spentMinor: 1185000, createdAt: new Date().toISOString() },
-    { id: 'b-5', workspaceId: 'default-workspace-harbor-pine', categoryId: 'cat-5', categoryName: 'Contractors', amountMinor: 1800000, period: '2026-10', alertAtPct: 90, ownerLabel: 'Delivery', spentMinor: 1340000, createdAt: new Date().toISOString() },
-    { id: 'b-6', workspaceId: 'default-workspace-harbor-pine', categoryId: 'cat-6', categoryName: 'Rent & Utilities', amountMinor: 1250000, period: '2026-10', alertAtPct: 90, ownerLabel: 'Facilities', spentMinor: 1250000, createdAt: new Date().toISOString() },
-    { id: 'b-7', workspaceId: 'default-workspace-harbor-pine', categoryId: 'cat-7', categoryName: 'Travel', amountMinor: 400000, period: '2026-10', alertAtPct: 90, ownerLabel: 'Sales', spentMinor: 512000, createdAt: new Date().toISOString() },
-  ];
-
-  findAll(workspaceId: string): Budget[] {
-    return this.budgets.filter((b) => b.workspaceId === workspaceId);
+  /** Spending per lower-cased category for one month (YYYY-MM), from the ledger. */
+  async spentIn(ctx: UserContext, month: string): Promise<Record<string, number>> {
+    const expenses = await selectAll(
+      (from, to) => ctx.db.from('ledger_transactions').select('id,cat,amt').eq('user_id', ctx.user.id)
+        .lt('amt', 0).neq('status', 'Failed').like('date', `${month}%`).order('id').range(from, to),
+      'Read budget spending',
+    );
+    const spent: Record<string, number> = {};
+    for (const r of expenses) {
+      const cat = String(r.cat).toLowerCase();
+      spent[cat] = (spent[cat] ?? 0) - toMinor(r.amt);
+    }
+    return spent;
   }
 
-  create(workspaceId: string, body: any): Budget {
-    const id = body.id || `b-${Date.now().toString(36)}`;
-    let amtMinor = body.amountMinor;
-    if (amtMinor === undefined && body.budget !== undefined) {
-      amtMinor = Math.round(Number(body.budget) * 100);
-    }
-    if (amtMinor === undefined && body.amount !== undefined) {
-      amtMinor = Math.round(Number(body.amount) * 100);
-    }
-    if (amtMinor === undefined) amtMinor = 0;
-
-    const categoryName = body.categoryName || body.k || body.category || 'General';
-    const item: Budget = {
-      id,
-      workspaceId,
-      categoryId: body.categoryId || `cat-${Date.now()}`,
-      categoryName,
-      amountMinor: amtMinor,
-      period: body.period || '2026-10',
-      alertAtPct: body.alertAtPct || 90,
-      ownerLabel: body.ownerLabel || body.owner || 'Finance',
-      spentMinor: body.spentMinor || 0,
-      createdAt: new Date().toISOString(),
-    };
-
-    this.budgets.push(item);
-    return item;
+  async findAll(ctx: UserContext): Promise<Budget[]> {
+    const period = monthKey(new Date());
+    const [list, spent] = await Promise.all([
+      selectAll((from, to) => ctx.db.from(TABLE).select('*').eq('user_id', ctx.user.id).order('budget', { ascending: false }).order('id').range(from, to), 'List budgets'),
+      this.spentIn(ctx, period),
+    ]);
+    return list.map((r) => toBudget(r, ctx.user.id, period, spent));
   }
 
-  update(workspaceId: string, id: string, patch: Partial<Budget>): Budget {
-    const idx = this.budgets.findIndex((b) => b.id === id && b.workspaceId === workspaceId);
-    if (idx === -1) {
-      throw new NotFoundException({ code: 'not_found', message: 'Budget not found.' });
-    }
-    this.budgets[idx] = { ...this.budgets[idx], ...patch };
-    return this.budgets[idx];
+  async create(ctx: UserContext, body: unknown): Promise<Budget> {
+    const cols = budgetColumns(body, false);
+    const { data, error } = await ctx.db.from(TABLE).insert({
+      id: newId('b'),
+      k: cols.k,
+      budget: cols.budget,
+      owner: cols.owner || 'Finance',
+      alert: cols.alert || '90% of budget',
+    }).select('*').single();
+    if (error) dbError(error, 'Create budget');
+    return this.withSpending(ctx, data);
   }
 
-  delete(workspaceId: string, id: string): boolean {
-    const initialLen = this.budgets.length;
-    this.budgets = this.budgets.filter((b) => !(b.id === id && b.workspaceId === workspaceId));
-    return this.budgets.length < initialLen;
+  async update(ctx: UserContext, id: string, patch: unknown): Promise<Budget> {
+    if (!validId(id)) throw this.notFound();
+    const cols = budgetColumns(patch, true);
+    const query = Object.keys(cols).length
+      ? ctx.db.from(TABLE).update(cols).eq('user_id', ctx.user.id).eq('id', id).select('*')
+      : ctx.db.from(TABLE).select('*').eq('user_id', ctx.user.id).eq('id', id);
+    const updated = rows(await query, 'Update budget');
+    if (!updated[0]) throw this.notFound();
+    return this.withSpending(ctx, updated[0]);
+  }
+
+  async delete(ctx: UserContext, id: string): Promise<boolean> {
+    if (!validId(id)) return false;
+    return rows(await ctx.db.from(TABLE).delete().eq('user_id', ctx.user.id).eq('id', id).select('id'), 'Delete budget').length > 0;
+  }
+
+  private async withSpending(ctx: UserContext, row: any): Promise<Budget> {
+    const period = monthKey(new Date());
+    return toBudget(row, ctx.user.id, period, await this.spentIn(ctx, period));
+  }
+
+  private notFound() {
+    return new NotFoundException({ code: 'not_found', message: 'Budget not found.' });
   }
 }

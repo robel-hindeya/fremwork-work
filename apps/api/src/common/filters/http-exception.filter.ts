@@ -4,12 +4,15 @@ import {
   ArgumentsHost,
   HttpException,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { randomBytes } from 'crypto';
 
 @Catch()
 export class FremworkExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger('Exceptions');
+
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
@@ -39,8 +42,15 @@ export class FremworkExceptionFilter implements ExceptionFilter {
           code = 'validation_failed';
         }
       }
-    } else if (exception instanceof Error) {
-      message = exception.message;
+    } else {
+      // Unexpected errors may carry internal details (SQL, hostnames, keys); log them, never return them.
+      this.logger.error(`${request.method} ${request.path} ${requestId}: ${exception instanceof Error ? exception.stack || exception.message : String(exception)}`);
+    }
+
+    if (response.headersSent) {
+      // A streamed response (SSE) already started; just close it.
+      response.end();
+      return;
     }
 
     response.status(status).json({
@@ -70,6 +80,10 @@ export class FremworkExceptionFilter implements ExceptionFilter {
         return 'rate_limited';
       case HttpStatus.PAYMENT_REQUIRED:
         return 'usage_limit';
+      case HttpStatus.NOT_IMPLEMENTED:
+        return 'not_implemented';
+      case HttpStatus.SERVICE_UNAVAILABLE:
+        return 'unavailable';
       default:
         return 'internal';
     }

@@ -9,81 +9,65 @@ import {
   UseGuards,
   NotFoundException,
 } from '@nestjs/common';
-import { Response } from 'express';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiHeader } from '@nestjs/swagger';
+import type { Response } from 'express';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { WorkspaceGuard } from '../../common/guards/workspace.guard';
-import { CurrentWorkspaceId } from '../../common/decorators/current-workspace.decorator';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { ReasoningMode } from '@fremwork/types';
+import { Ctx } from '../../common/decorators/user-context.decorator';
+import { UserContext, badRequest, text, validId } from '../../common/data/db';
 import { ChatService } from './chat.service';
+import { ConversationsService } from './conversations.service';
 
 @ApiTags('AI Assistant')
 @ApiBearerAuth()
-@ApiHeader({ name: 'X-Workspace-Id', required: true })
 @Controller('conversations')
 @UseGuards(AuthGuard, WorkspaceGuard)
 export class ChatController {
-  constructor(private readonly chatService: ChatService) {}
+  constructor(
+    private readonly chatService: ChatService,
+    private readonly conversations: ConversationsService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'Get recent conversations for sidebar' })
-  getConversations(@CurrentWorkspaceId() wsId: string) {
-    const list = this.chatService.getConversations(wsId);
-    return { success: true, data: list };
+  async getConversations(@Ctx() ctx: UserContext) {
+    return { success: true, data: await this.conversations.list(ctx) };
   }
 
   @Post()
   @ApiOperation({ summary: 'Start a new conversation thread' })
-  createConversation(
-    @CurrentWorkspaceId() wsId: string,
-    @CurrentUser() user: any,
-    @Body() body: { title?: string; projectId?: string },
-  ) {
-    const convo = this.chatService.createConversation(
-      wsId,
-      user?.id || 'usr-1',
-      body.title,
-      body.projectId,
-    );
-    return { success: true, data: convo };
+  async createConversation(@Ctx() ctx: UserContext, @Body() body: { id?: string; title?: string; projectId?: string }) {
+    const data = body ?? {};
+    if (data.id !== undefined && !validId(data.id)) badRequest('Invalid conversation id.', 'id');
+    if (data.projectId !== undefined && !validId(data.projectId)) badRequest('Invalid project id.', 'projectId');
+    const title = text(data, ['title'], 200)?.trim() || 'New conversation';
+    return { success: true, data: await this.conversations.create(ctx, title, { id: data.id, projectId: data.projectId }) };
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get full conversation thread with message history' })
-  getConversation(@CurrentWorkspaceId() wsId: string, @Param('id') id: string) {
-    const convo = this.chatService.getConversation(wsId, id);
-    return { success: true, data: convo };
+  async getConversation(@Ctx() ctx: UserContext, @Param('id') id: string) {
+    return { success: true, data: await this.conversations.get(ctx, id) };
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete conversation thread' })
-  deleteConversation(@CurrentWorkspaceId() wsId: string, @Param('id') id: string) {
-    const deleted = this.chatService.deleteConversation(wsId, id);
-    if (!deleted) {
-      throw new NotFoundException({
-        code: 'not_found',
-        message: 'Conversation not found.',
-      });
+  async deleteConversation(@Ctx() ctx: UserContext, @Param('id') id: string) {
+    if (!(await this.conversations.delete(ctx, id))) {
+      throw new NotFoundException({ code: 'not_found', message: 'Conversation not found.' });
     }
     return { success: true, message: 'Conversation deleted.' };
   }
 
   @Post(':id/messages')
-  @ApiOperation({ summary: 'Ask question with Server-Sent Events (SSE) streaming answer blocks' })
+  @ApiOperation({ summary: 'Ask a question; the answer streams back as Server-Sent Events (meta, block…, done)' })
   async streamMessage(
-    @CurrentWorkspaceId() wsId: string,
+    @Ctx() ctx: UserContext,
     @Param('id') id: string,
-    @Body() body: { text?: string; content?: string; message?: string; mode?: ReasoningMode; uploadIds?: string[] },
+    @Body() body: { text?: string; content?: string; message?: string; mode?: string },
     @Res() res: Response,
   ) {
-    const text = body.text || body.content || body.message || '';
-    return this.chatService.streamResponse(
-      wsId,
-      id,
-      text,
-      body.mode || 'Balanced',
-      res,
-    );
+    const b = body ?? {};
+    return this.chatService.streamResponse(ctx, id, b.text ?? b.content ?? b.message, b.mode, res);
   }
 }

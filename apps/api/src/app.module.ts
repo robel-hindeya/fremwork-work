@@ -13,10 +13,10 @@ import { DataSourcesModule } from './modules/data-sources/data-sources.module';
 import { ChatModule } from './modules/chat/chat.module';
 import { OverviewModule } from './modules/overview/overview.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
-import { WorkersModule } from './modules/workers/workers.module';
 
 @Module({
   imports: [
+    // Local development reads .env files; on Render the variables come from the service's environment.
     ConfigModule.forRoot({ isGlobal: true, envFilePath: ['.env', '../../.env'] }),
     SupabaseModule,
     HealthModule,
@@ -30,7 +30,6 @@ import { WorkersModule } from './modules/workers/workers.module';
     ChatModule,
     OverviewModule,
     AnalyticsModule,
-    WorkersModule,
   ],
   controllers: [AppController],
 })
