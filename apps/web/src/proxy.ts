@@ -12,7 +12,7 @@ export async function proxy(req: NextRequest) {
     && !sameOriginRequest(req.headers.get('origin'), publicOrigin(req))) {
     return NextResponse.json({ success: false, error: 'Untrusted request origin.' }, { status: 403 });
   }
-  // A cross-site handoff must reach its handler before existing sessions are refreshed.
+  // The retired cross-site handoff answers every POST with a redirect to sign in; it sets no session.
   if (pathname === '/api/auth/session') return NextResponse.next();
 
   if (await verifyAccessToken(req.cookies.get(ACCESS_COOKIE)?.value)) return NextResponse.next();

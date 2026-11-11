@@ -3,32 +3,33 @@ import path from 'node:path';
 // One .env for the whole repo, at the root. On Vercel the file is absent and real env vars are used.
 try { process.loadEnvFile(path.resolve(process.cwd(), '../../.env')); } catch {}
 
-/** @type {import('next').NextConfig} */
-// The NestJS prototype API (apps/api) refuses to start in production, so a production build always
-// serves /v1/* from the built-in Next.js handlers in src/app/api, even if API_URL is set in the host's env.
+// The web app serves /v1/* from its own route handlers in src/app/api. In development only, API_URL
+// can point /v1/* at a separately running apps/api instead; production builds ignore it.
 const API_URL = process.env.NODE_ENV === 'production' ? undefined : process.env.API_URL;
-// Sign-up and login live on the Fremwork website, which hands the session back to /auth/callback.
-const LANDING_URL = process.env.LANDING_URL || 'https://fremwork.com';
-// The Render workspace pairs with the Render landing site unless LANDING_URL says otherwise.
-const PAIRED_LANDING = { 'fremwork-app.onrender.com': 'https://fremwork-land.onrender.com' };
-const paired = process.env.LANDING_URL ? [] : Object.entries(PAIRED_LANDING).flatMap(([host, landing]) => {
-  const has = [{ type: 'host', value: host }];
-  return [
-    { source: '/sign-in', has, destination: `${landing}/login`, permanent: false },
-    { source: '/sign-up', has, destination: `${landing}/signup`, permanent: false },
-    { source: '/forgot-password', has, destination: `${landing}/login`, permanent: false },
-  ];
-});
 
+// Sign-in, sign-up and password reset happen on this site. Sessions are never handed over from
+// another domain (that pattern got the Render workspace flagged by Google Safe Browsing).
+
+/**
+ * Browser security headers for every response. The CSP is limited to directives that can't break
+ * Next.js's inline bootstrap scripts: no framing (clickjacking), forms may only post to this origin,
+ * no <base> hijacking and no plugins.
+ */
+const SECURITY_HEADERS = [
+  { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains' },
+  { key: 'X-Frame-Options', value: 'DENY' },
+  { key: 'X-Content-Type-Options', value: 'nosniff' },
+  { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=()' },
+  { key: 'Content-Security-Policy', value: "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" },
+];
+
+/** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  async redirects() {
-    return [
-      ...paired,
-      { source: '/sign-in', destination: `${LANDING_URL}/login`, permanent: false },
-      { source: '/sign-up', destination: `${LANDING_URL}/signup`, permanent: false },
-      { source: '/forgot-password', destination: `${LANDING_URL}/login`, permanent: false },
-    ];
+  poweredByHeader: false,
+  async headers() {
+    return [{ source: '/:path*', headers: SECURITY_HEADERS }];
   },
   async rewrites() {
     if (API_URL) {

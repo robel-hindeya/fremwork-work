@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authError, authFetch, setSessionCookies, verifyAccessToken } from "@/lib/server/auth";
 import { publicOrigin } from "@/lib/server/origins";
+import { newPkce, storePkce } from "@/lib/server/pkce";
 
 export const runtime = "nodejs";
 
@@ -13,10 +14,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Please enter your email and password." }, { status: 400 });
     }
 
+    // The confirmation link returns to /auth/callback with a one-time code for this browser.
+    const pkce = newPkce("signup");
     const redirect = encodeURIComponent(`${publicOrigin(req)}/auth/callback`);
     const res = await authFetch(`/signup?redirect_to=${redirect}`, {
       method: "POST",
-      body: JSON.stringify({ email: email.trim().toLowerCase(), password, data: { name, company } }),
+      body: JSON.stringify({ email: email.trim().toLowerCase(), password, data: { name, company }, ...pkce.challenge }),
     });
     const body = await res.json();
 
@@ -31,7 +34,9 @@ export async function POST(req: NextRequest) {
     }
 
     if (!body.access_token) {
-      return NextResponse.json({ success: true, needsConfirmation: true }, { status: 201 });
+      const pending = NextResponse.json({ success: true, needsConfirmation: true }, { status: 201 });
+      storePkce(pending, pkce);
+      return pending;
     }
 
     const response = NextResponse.json({ success: true, user: await verifyAccessToken(body.access_token) }, { status: 201 });

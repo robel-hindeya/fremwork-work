@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Mail } from "lucide-react";
 import { useEffect, useState } from "react";
-import { PasswordField, passwordRule } from "@/components/auth-bits";
+import { GoogleButton, PasswordField, passwordRule } from "@/components/auth-bits";
 import { Banner, Field, FieldError } from "@/components/ui";
 import { isEmail } from "@/lib/format";
 import { api } from "@/lib/client/api";
@@ -101,6 +101,8 @@ export default function SignUp() {
       <div><h1>Create your account</h1><p className="muted" style={{ margin: "6px 0 0" }}>Start with your company’s numbers. It takes about two minutes.</p></div>
       {apiError && <Banner tone="err">{apiError}</Banner>}
       {tried && bad > 0 && <Banner tone="err">{bad === 1 ? "Fix 1 field to continue." : `Fix ${bad} fields to continue.`}</Banner>}
+      <GoogleButton label="Sign up with Google" />
+      <div className="divider">or with email</div>
       <Field id="su-name" label="Full name" error={err("name")}>{(a) => <input {...a} className="input lg" autoComplete="name" value={v.name} onChange={set("name")} />}</Field>
       <Field id="su-email" label="Work email" error={err("email")}>{(a) => <input {...a} type="email" className="input lg" autoComplete="email" placeholder="name@company.com" value={v.email} onChange={set("email")} />}</Field>
       <Field id="su-company" label="Company name" error={err("company")}>{(a) => <input {...a} className="input lg" autoComplete="organization" value={v.company} onChange={set("company")} />}</Field>

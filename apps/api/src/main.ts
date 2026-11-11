@@ -23,6 +23,14 @@ async function bootstrap() {
   // Render (and most hosts) terminate TLS at a proxy; trust its X-Forwarded-* headers.
   app.getHttpAdapter().getInstance().set('trust proxy', 1);
   app.getHttpAdapter().getInstance().disable('x-powered-by');
+  app.use((_req: any, res: any, next: () => void) => {
+    res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Content-Security-Policy', "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'");
+    next();
+  });
   app.enableShutdownHooks();
 
   // Every route lives under /v1 except the index, docs index and the load-balancer health checks.

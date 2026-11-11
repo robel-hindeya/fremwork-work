@@ -4,8 +4,12 @@ const assert = require('node:assert/strict');
 const { NextRequest } = require('next/server');
 const auth = require('../apps/web/src/lib/server/auth.ts');
 const { db, userScope } = require('../apps/web/src/lib/server/db.ts');
-const { trustedHandoffOrigin, sameOriginRequest, publicOrigin } = require('../apps/web/src/lib/server/origins.ts');
+const { sameOriginRequest, publicOrigin } = require('../apps/web/src/lib/server/origins.ts');
 const { POST: handoff } = require('../apps/web/src/app/api/auth/session/route.ts');
+const { GET: googleStart } = require('../apps/web/src/app/api/auth/google/route.ts');
+const { GET: callback } = require('../apps/web/src/app/auth/callback/route.ts');
+const { POST: forgot } = require('../apps/web/src/app/api/auth/forgot/route.ts');
+const { createHash } = require('node:crypto');
 const { proxy } = require('../apps/web/src/proxy.ts');
 const { FINANCIAL_AGENT_TOOLS } = require('../apps/web/src/lib/server/agent/tools.ts');
 const { runFinancialAgent } = require('../apps/web/src/lib/server/agent/engine.ts');
@@ -42,13 +46,11 @@ test('routing uses explicit admin intent and rejects external or malformed desti
   }
 });
 
-test('origins require an exact allowlist match', () => {
-  assert.equal(trustedHandoffOrigin('https://fremwork.com', 'https://app.fremwork.com'), true);
-  for (const origin of ['https://www.fremwork.com', 'https://fremwork-land.onrender.com']) {
-    assert.equal(trustedHandoffOrigin(origin, 'https://fremwork-app.onrender.com'), true, `${origin} may hand off to the Render workspace`);
+test('same-origin checks reject missing and foreign origins', () => {
+  assert.equal(sameOriginRequest('https://app.fremwork.com', 'https://app.fremwork.com'), true);
+  for (const origin of [null, 'null', 'https://fremwork.com', 'https://fremwork-land.onrender.com', 'https://app.fremwork.com.evil.example']) {
+    assert.equal(sameOriginRequest(origin, 'https://app.fremwork.com'), false);
   }
-  for (const origin of [null, 'null', 'https://fremwork.com.evil.example', 'https://other.vercel.app', 'https://fremwork-land.onrender.com.evil.example', 'http://fremwork-land.onrender.com', 'https://evil.onrender.com']) assert.equal(trustedHandoffOrigin(origin, 'https://app.fremwork.com'), false);
-  assert.equal(sameOriginRequest(null, 'https://app.fremwork.com'), false);
 });
 
 test('tenant requests bind both the bearer token and user filter, including hostile filters', async () => {
@@ -64,33 +66,83 @@ test('tenant requests bind both the bearer token and user filter, including host
   }
 });
 
-test('handoff rotates a paired session into HttpOnly cookies with no credentials in the redirect', async () => {
-  const form = new URLSearchParams({ access_token: 'access-test', refresh_token: 'refresh-test' });
-  const req = new NextRequest('https://app.fremwork.com/api/auth/session', { method: 'POST', headers: { origin: 'https://fremwork.com', 'content-type': 'application/x-www-form-urlencoded' }, body: form });
-  await mockFetch(async (url) => String(url).includes('/token?')
-    ? json({ access_token: 'new-access-test', refresh_token: 'new-refresh-test', expires_in: 3600 })
-    : json({ id: 'u1', email: 'test@example.invalid', email_confirmed_at: '2026-01-01' }), async () => {
-    const res = await handoff(req);
-    assert.equal(res.status, 303);
-    assert.equal(res.headers.get('location'), '/chat');
-    assert.match(res.headers.get('set-cookie'), /HttpOnly/i);
-    assert.equal(res.headers.get('cache-control'), 'no-store');
+test('the retired cross-site handoff ignores posted tokens: no Supabase call, no cookies, just sign in', async () => {
+  let calls = 0;
+  await mockFetch(async () => { calls++; return json({}); }, async () => {
+    for (const origin of ['https://fremwork-land.onrender.com', 'https://fremwork.com', 'https://evil.example']) {
+      const req = new NextRequest('https://fremwork-app.onrender.com/api/auth/session', { method: 'POST', headers: { origin, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ access_token: 'a', refresh_token: 'r' }) });
+      const res = await handoff(req);
+      assert.equal(res.status, 303);
+      assert.equal(res.headers.get('location'), '/sign-in');
+      assert.equal(res.headers.get('set-cookie'), null);
+    }
   });
-  const hostile = new NextRequest(req.url, { method: 'POST', headers: { origin: 'https://evil.example' } });
-  assert.equal((await handoff(hostile)).status, 403);
+  assert.equal(calls, 0);
 });
 
-test('handoff rejects refresh tokens belonging to another identity', async () => {
-  let users = 0;
-  await mockFetch(async (url) => String(url).includes('/token?')
-    ? json({ access_token: 'other-access', refresh_token: 'other-refresh', expires_in: 3600 })
-    : json({ id: ++users === 1 ? 'u1' : 'u2', email_confirmed_at: '2026-01-01' }), async () => {
-    const req = new NextRequest('https://app.fremwork.com/api/auth/session', { method: 'POST', headers: { origin: 'https://fremwork.com' }, body: new URLSearchParams({ access_token: 'test', refresh_token: 'other' }) });
-    const res = await handoff(req);
-    assert.equal(res.status, 303);
-    assert.match(res.headers.get('location'), /session_expired/);
-    assert.equal(res.headers.get('set-cookie'), null);
+const pkceCookie = (res) => /fremwork_pkce=([^;]+)/.exec(res.headers.get('set-cookie') || '')?.[1];
+
+test('Google sign-in starts on this site with PKCE; the verifier stays in an HttpOnly cookie', async () => {
+  const req = new NextRequest('http://localhost:10000/api/auth/google', { headers: { host: 'fremwork-app.onrender.com', 'x-forwarded-proto': 'https' } });
+  const res = await googleStart(req);
+  assert.equal(res.status, 303);
+  const to = new URL(res.headers.get('location'));
+  assert.equal(to.pathname, '/auth/v1/authorize');
+  assert.equal(to.searchParams.get('provider'), 'google');
+  assert.equal(to.searchParams.get('redirect_to'), 'https://fremwork-app.onrender.com/auth/callback');
+  assert.equal(to.searchParams.get('code_challenge_method'), 's256');
+  const cookie = res.headers.get('set-cookie');
+  assert.match(cookie, /HttpOnly/i);
+  assert.match(cookie, /Path=\/auth\/callback/i);
+  const [purpose, verifier] = decodeURIComponent(pkceCookie(res)).split('.');
+  assert.equal(purpose, 'signin');
+  assert.equal(to.searchParams.get('code_challenge'), createHash('sha256').update(verifier).digest('base64url'));
+  assert.ok(!to.toString().includes(verifier), 'the verifier never leaves this site');
+});
+
+test('callback exchanges the one-time code with the stored verifier, then sets the session', async () => {
+  const verifier = 'v'.repeat(64);
+  const seen = [];
+  await mockFetch(async (url, init) => {
+    seen.push({ url: String(url), body: init && init.body });
+    return String(url).includes('grant_type=pkce')
+      ? json({ access_token: 'acc', refresh_token: 'ref', expires_in: 3600 })
+      : json({ id: 'u1', email: 'test@example.invalid', email_confirmed_at: '2026-01-01' });
+  }, async () => {
+    const ok = await callback(new NextRequest('https://fremwork-app.onrender.com/auth/callback?code=abc', { headers: { cookie: 'fremwork_pkce=signin.' + verifier } }));
+    assert.equal(ok.status, 303);
+    assert.equal(ok.headers.get('location'), '/chat');
+    assert.match(ok.headers.get('set-cookie'), /fremwork_access=acc/);
+    assert.deepEqual(JSON.parse(seen[0].body), { auth_code: 'abc', code_verifier: verifier });
+
+    const recovery = await callback(new NextRequest('https://fremwork-app.onrender.com/auth/callback?code=abc', { headers: { cookie: 'fremwork_pkce=recovery.' + verifier } }));
+    assert.equal(recovery.headers.get('location'), '/reset-password');
   });
+
+  // Without this browser's verifier (another browser, or a forged link) no session is created.
+  for (const cookie of ['', 'fremwork_pkce=signin.short', 'fremwork_pkce=admin.' + verifier]) {
+    const res = await callback(new NextRequest('https://fremwork-app.onrender.com/auth/callback?code=abc', { headers: cookie ? { cookie } : {} }));
+    assert.equal(res.headers.get('location'), '/sign-in?error=expired');
+    assert.doesNotMatch(res.headers.get('set-cookie') || '', /fremwork_access=/);
+  }
+  const denied = await callback(new NextRequest('https://fremwork-app.onrender.com/auth/callback?error=access_denied'));
+  assert.equal(denied.headers.get('location'), '/sign-in?error=provider');
+  const legacy = await callback(new NextRequest('https://fremwork-app.onrender.com/auth/callback'));
+  assert.equal(legacy.status, 200);
+  assert.match(await legacy.text(), /location\.replace\("\/sign-in\?notice=confirmed"\)/);
+});
+
+test('password reset emails use PKCE back to this site', async () => {
+  let sent;
+  await mockFetch(async (url, init) => { sent = { url: String(url), body: JSON.parse(init.body) }; return json({}); }, async () => {
+    const res = await forgot(new NextRequest('http://localhost:10000/api/auth/forgot', { method: 'POST', headers: { host: 'fremwork-app.onrender.com', 'x-forwarded-proto': 'https' }, body: JSON.stringify({ email: 'A@Example.invalid' }) }));
+    assert.equal(res.status, 200);
+    assert.match(decodeURIComponent(pkceCookie(res)), /^recovery\./);
+  });
+  assert.match(sent.url, /redirect_to=https%3A%2F%2Ffremwork-app\.onrender\.com%2Fauth%2Fcallback/);
+  assert.equal(sent.body.email, 'a@example.invalid');
+  assert.equal(sent.body.code_challenge_method, 's256');
+  assert.match(sent.body.code_challenge, /^[A-Za-z0-9_-]{43}$/);
 });
 
 test('expired and forged sessions cannot open private pages or APIs; cross-site writes are rejected', async () => {
@@ -113,8 +165,6 @@ test('behind a reverse proxy (Render) same-origin writes and redirects use the p
     assert.equal((await proxy(proxied('/api/chat', { method: 'POST', headers: { origin: 'https://evil.example' } }))).status, 403);
     assert.equal((await proxy(proxied('/chat'))).headers.get('location'), `https://${host}/sign-in`);
   });
-  const handoffReq = new NextRequest('http://localhost:10000/api/auth/session', { method: 'POST', headers: { host, 'x-forwarded-proto': 'https', origin: `https://${host}` } });
-  assert.equal(trustedHandoffOrigin(handoffReq.headers.get('origin'), publicOrigin(handoffReq)), true);
 });
 
 test('agent is read-only, processes bounded tools, and never executes a provider-requested mutation', async () => {

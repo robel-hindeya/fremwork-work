@@ -1,30 +1,13 @@
-import { NextRequest, NextResponse } from "next/server";
-import { refreshSession, setSessionCookies, verifyAccessToken } from "@/lib/server/auth";
-import { publicOrigin, trustedHandoffOrigin } from "@/lib/server/origins";
+import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
-export async function POST(req: NextRequest) {
-  if (!trustedHandoffOrigin(req.headers.get('origin'), publicOrigin(req))) {
-    return NextResponse.json({ success: false, error: 'Untrusted sign-in origin.' }, { status: 403 });
-  }
-  try {
-    const form = await req.formData();
-    const access = form.get('access_token');
-    const refresh = form.get('refresh_token');
-    if (typeof access !== 'string' || typeof refresh !== 'string') throw new Error('Missing session');
-    const user = await verifyAccessToken(access);
-    if (!user) throw new Error('Invalid session');
-    const session = await refreshSession(refresh);
-    const refreshedUser = session && await verifyAccessToken(session.access_token);
-    if (!session || refreshedUser?.id !== user.id) throw new Error('Invalid session pair');
-    // Relative Location: behind Render's proxy req.url is the internal https://localhost:10000.
-    const response = new NextResponse(null, { status: 303, headers: { Location: '/chat' } });
-    response.headers.set('Cache-Control', 'no-store');
-    response.headers.set('Referrer-Policy', 'no-referrer');
-    setSessionCookies(response, session);
-    return response;
-  } catch {
-    return new NextResponse(null, { status: 303, headers: { Location: '/sign-in?error=session_expired', 'Cache-Control': 'no-store' } });
-  }
+/**
+ * Retired. Other sites used to POST a user's Supabase tokens here to hand over a session. A page on
+ * one domain auto-submitting credentials to another is what phishing kits do, and Google Safe Browsing
+ * flagged this URL for it. Sessions are now only created on this site (password sign-in, or Google and
+ * email links via /auth/callback). Anything posted here is ignored and the visitor is sent to sign in.
+ */
+export async function POST() {
+  return new NextResponse(null, { status: 303, headers: { Location: "/sign-in", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
 }
