@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { refreshSession, setSessionCookies, verifyAccessToken } from "@/lib/server/auth";
-import { trustedHandoffOrigin } from "@/lib/server/origins";
+import { publicOrigin, trustedHandoffOrigin } from "@/lib/server/origins";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
-  if (!trustedHandoffOrigin(req.headers.get('origin'), req.nextUrl.origin)) {
+  if (!trustedHandoffOrigin(req.headers.get('origin'), publicOrigin(req))) {
     return NextResponse.json({ success: false, error: 'Untrusted sign-in origin.' }, { status: 403 });
   }
   try {

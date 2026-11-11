@@ -25,3 +25,15 @@ npm run dev
 ## Deploy on Vercel
 
 Create one Vercel project per app from this repo, with Root Directory set to `apps/site` or `apps/web`. Add the values from `.env` as environment variables.
+
+## Deploy on Render
+
+Deploy only the workspace app (`apps/web`). Its Next.js route handlers in `apps/web/src/app/api` are the production API. Do not deploy `apps/api`: that NestJS prototype refuses to start when `NODE_ENV=production`.
+
+Create a Node web service with Root Directory left empty (the repo root) and:
+
+- Build Command: `npm ci --include=dev && npm run build:web`
+- Start Command: `npm run start:web`
+- Health Check Path: `/api/health`
+
+`next start` listens on Render's `PORT`. Set `GEMINI_API_KEY`, `GEMINI_MODEL`, `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Leave `API_URL` unset (production builds ignore it anyway).

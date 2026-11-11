@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { NextRequest } = require('next/server');
 const auth = require('../apps/web/src/lib/server/auth.ts');
 const { db, userScope } = require('../apps/web/src/lib/server/db.ts');
-const { trustedHandoffOrigin, sameOriginRequest } = require('../apps/web/src/lib/server/origins.ts');
+const { trustedHandoffOrigin, sameOriginRequest, publicOrigin } = require('../apps/web/src/lib/server/origins.ts');
 const { POST: handoff } = require('../apps/web/src/app/api/auth/session/route.ts');
 const { proxy } = require('../apps/web/src/proxy.ts');
 const { FINANCIAL_AGENT_TOOLS } = require('../apps/web/src/lib/server/agent/tools.ts');
@@ -72,7 +72,7 @@ test('handoff rotates a paired session into HttpOnly cookies with no credentials
     : json({ id: 'u1', email: 'test@example.invalid', email_confirmed_at: '2026-01-01' }), async () => {
     const res = await handoff(req);
     assert.equal(res.status, 303);
-    assert.equal(res.headers.get('location'), 'https://app.fremwork.com/chat');
+    assert.equal(res.headers.get('location'), '/chat');
     assert.match(res.headers.get('set-cookie'), /HttpOnly/i);
     assert.equal(res.headers.get('cache-control'), 'no-store');
   });
@@ -100,6 +100,21 @@ test('expired and forged sessions cannot open private pages or APIs; cross-site 
     assert.equal((await proxy(new NextRequest('https://app.fremwork.com/api/chat'))).status, 401);
     assert.equal((await proxy(new NextRequest('https://app.fremwork.com/api/transactions', { method: 'POST', headers: { origin: 'https://evil.example' } }))).status, 403);
   });
+});
+
+test('behind a reverse proxy (Render) same-origin writes and redirects use the public host, not the listen address', async () => {
+  const host = 'fremwork-app.onrender.com';
+  const proxied = (path, init = {}) => new NextRequest(`http://localhost:10000${path}`, { ...init, headers: { host, 'x-forwarded-proto': 'https', ...init.headers } });
+  assert.equal(publicOrigin(proxied('/')), `https://${host}`);
+  assert.equal(publicOrigin(new NextRequest('http://localhost:3000/', { headers: { host: 'bad host/evil' } })), 'http://localhost:3000');
+  await mockFetch(async () => json({ error: 'expired' }, 401), async () => {
+    // A same-origin write from the public site reaches its handler (401 = not signed in, not a 403 origin rejection).
+    assert.equal((await proxy(proxied('/api/chat', { method: 'POST', headers: { origin: `https://${host}` } }))).status, 401);
+    assert.equal((await proxy(proxied('/api/chat', { method: 'POST', headers: { origin: 'https://evil.example' } }))).status, 403);
+    assert.equal((await proxy(proxied('/chat'))).headers.get('location'), `https://${host}/sign-in`);
+  });
+  const handoffReq = new NextRequest('http://localhost:10000/api/auth/session', { method: 'POST', headers: { host, 'x-forwarded-proto': 'https', origin: `https://${host}` } });
+  assert.equal(trustedHandoffOrigin(handoffReq.headers.get('origin'), publicOrigin(handoffReq)), true);
 });
 
 test('agent is read-only, processes bounded tools, and never executes a provider-requested mutation', async () => {

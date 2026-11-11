@@ -1,4 +1,4 @@
-import { sameOriginRequest } from "@/lib/server/origins";
+import { publicOrigin, sameOriginRequest } from "@/lib/server/origins";
 import { NextResponse, type NextRequest } from "next/server";
 import { ACCESS_COOKIE, REFRESH_COOKIE, refreshSession, setSessionCookies, verifyAccessToken } from "@/lib/server/auth";
 
@@ -9,7 +9,7 @@ const isPublic = (path: string) => path.startsWith("/api/auth/") || PUBLIC_PATHS
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && pathname !== '/api/auth/session'
-    && !sameOriginRequest(req.headers.get('origin'), req.nextUrl.origin)) {
+    && !sameOriginRequest(req.headers.get('origin'), publicOrigin(req))) {
     return NextResponse.json({ success: false, error: 'Untrusted request origin.' }, { status: 403 });
   }
   // A cross-site handoff must reach its handler before existing sessions are refreshed.
@@ -30,7 +30,7 @@ export async function proxy(req: NextRequest) {
 
   if (isPublic(pathname)) return NextResponse.next();
   if (pathname.startsWith("/api/")) return NextResponse.json({ success: false, error: "Please sign in." }, { status: 401 });
-  return NextResponse.redirect(new URL("/sign-in", req.url));
+  return NextResponse.redirect(new URL("/sign-in", publicOrigin(req)));
 }
 
 export const config = {
