@@ -159,6 +159,14 @@ test('behind a reverse proxy (Render) same-origin writes and redirects use the p
   const proxied = (path, init = {}) => new NextRequest(`http://localhost:10000${path}`, { ...init, headers: { host, 'x-forwarded-proto': 'https', ...init.headers } });
   assert.equal(publicOrigin(proxied('/')), `https://${host}`);
   assert.equal(publicOrigin(new NextRequest('http://localhost:3000/', { headers: { host: 'bad host/evil' } })), 'http://localhost:3000');
+  // A client-supplied X-Forwarded-Host must never steer redirects or OAuth redirect_to off-site.
+  const spoofed = proxied('/', { headers: { 'x-forwarded-host': 'evil.example' } });
+  assert.equal(publicOrigin(spoofed), `https://${host}`);
+  await mockFetch(async () => json({ error: 'expired' }, 401), async () => {
+    assert.equal((await proxy(proxied('/chat', { headers: { 'x-forwarded-host': 'evil.example' } }))).headers.get('location'), `https://${host}/sign-in`);
+  });
+  const google = await googleStart(proxied('/api/auth/google', { headers: { 'x-forwarded-host': 'evil.example' } }));
+  assert.equal(new URL(google.headers.get('location')).searchParams.get('redirect_to'), `https://${host}/auth/callback`);
   await mockFetch(async () => json({ error: 'expired' }, 401), async () => {
     // A same-origin write from the public site reaches its handler (401 = not signed in, not a 403 origin rejection).
     assert.equal((await proxy(proxied('/api/chat', { method: 'POST', headers: { origin: `https://${host}` } }))).status, 401);

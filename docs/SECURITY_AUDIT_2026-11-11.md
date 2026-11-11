@@ -68,3 +68,22 @@ Deploy both services first, then confirm the fix is live: after signing in on th
 5. Re-check status at <https://transparencyreport.google.com/safe-browsing/search?url=fremwork-app.onrender.com>.
 
 **Strongly recommended:** serve the workspace from your own domain (`app.fremwork.com`) instead of a shared `onrender.com` subdomain. Reputation then belongs to your domain, and `app.fremwork.com` is already in the API's CORS defaults.
+
+## Follow-up audit (same day, after deploying `99c1699` and landing `57ec4a2`)
+
+**Deploys verified live.** The workspace serves its own `/sign-in`, `/sign-up`, `/forgot-password` and `/reset-password` (200). `/api/auth/google` starts Supabase PKCE. A cross-site POST to `/api/auth/session` returns `303 /sign-in` with no cookie. Security headers are on every response. The landing `/open-app` bundle contains only a `/sign-in` link: no form, no tokens, no `/api/auth/session`.
+
+**The Safe Browsing listing covers the whole host, not specific endpoints.** The Transparency Report gives the same "social engineering" verdict for `/api/auth/google`, `/api/health` and `/zz-nonexistent-path-8841` (a path that never existed). `/api/auth/google` was not detected separately; Chrome warns on every URL under `fremwork-app.onrender.com` until Google re-reviews the host. The listing predates the fixes, and the pattern that most likely caused it (cross-site token POST) is no longer served.
+
+**Live crawl of every route (42 paths).** Private pages redirect to `/sign-in` on the same host. Private APIs return `401` JSON. Auth POST routes return `405` to GET. The only off-site redirect is `/api/auth/google` → this project's Supabase `/auth/v1/authorize`, which forwards to `accounts.google.com`.
+
+**Public pages and scripts.** The four public pages load only same-origin assets (11 `/_next` chunks, logo, icon); their HTML references no external host. Their three inline scripts are Next.js's bootstrap. Across all 14 JavaScript bundles (689 KB), the only external URLs are `w3.org` (SVG namespaces), `nextjs.org`, `react.dev` and `github.com` (framework error and license strings). There are no beacons, WebSockets or wallet code. The one `atob` decodes React's server-component stream; `crypto.subtle` is Next's router-cache hash.
+
+**Redirect and proxy abuse probes.** The image optimizer rejects external and protocol-relative URLs (400). `next`/`redirect_to` query parameters are ignored. `//evil.example` normalises to a same-host path. CORS sends no `Access-Control-Allow-Origin` to foreign origins. A spoofed `Host` header is blocked at Render's edge (Cloudflare 403), and a client-supplied `X-Forwarded-Proto` is overwritten by the platform.
+
+| # | Severity | Finding | Status |
+| --- | --- | --- | --- |
+| 12 | Medium | `publicOrigin()` trusted `X-Forwarded-Host`, which Render passes through from the client. `X-Forwarded-Host: evil.example` made `/` redirect to `https://evil.example/sign-in` and made `/api/auth/google` send `redirect_to=https://evil.example/auth/callback` to Supabase. A link cannot set this header, Supabase's redirect allowlist should refuse unknown hosts, and PKCE stops a stolen code from being redeemed, so there was no practical account takeover. It was still a header-driven open redirect with cache-poisoning potential. | **Fixed**: only the platform-routed `Host` header is used. Regression test added. |
+| 13 | Info | Dependencies rechecked: no malware advisories; 541 registry signatures and 58 attestations verified; install scripts only in `@nestjs/core` (donation notice) and `fsevents` (optional, macOS). The 10 remaining production advisories are finding 6. | Unchanged |
+
+**Conclusion.** The live application has no phishing content, injected code or malicious redirect. The listing was a reasonable automated response to a real design flaw (the cross-site token handoff), now removed. The current listing is stale rather than a false positive about the original behaviour. Request the review described above.
